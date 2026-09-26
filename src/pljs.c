@@ -953,10 +953,22 @@ Datum pljs_call_handler(PG_FUNCTION_ARGS) {
     }
     PG_CATCH();
     {
+      for (int i = 0; i < context.function->inargs; i++) {
+        JS_FreeValue(context.ctx, argv[i]);
+      }
       store_storage_in_context(&context, old_storage);
       PG_RE_THROW();
     }
     PG_END_TRY();
+
+    /*
+     * The converted arguments are references the runtime handed out and the
+     * call does not consume; without this they stayed alive for the life of
+     * the backend, one set per call.
+     */
+    for (int i = 0; i < context.function->inargs; i++) {
+      JS_FreeValue(context.ctx, argv[i]);
+    }
 
     // Reset to the old storage now that the call is over.
     store_storage_in_context(&context, old_storage);
@@ -1439,6 +1451,9 @@ static Datum call_trigger(FunctionCallInfo fcinfo, pljs_context *context) {
     char *detail = dump_error(context->ctx, &message, &pg_detail, &sqlstate);
 
     JS_FreeValue(context->ctx, ret);
+    for (int i = 0; i < 10; i++) {
+      JS_FreeValue(context->ctx, argv[i]);
+    }
     MemoryContextSwitchTo(old_context);
 
     /* Surface a pending cancel/terminate as the real PostgreSQL error. */
@@ -1464,6 +1479,18 @@ static Datum call_trigger(FunctionCallInfo fcinfo, pljs_context *context) {
   }
 
   JS_FreeValue(context->ctx, ret);
+
+  /*
+   * The arguments (NEW, OLD, the TG_* strings, TG_ARGV) are references the
+   * runtime handed out; they were never released, so every trigger call kept
+   * its NEW and OLD objects alive for the life of the backend. A bulk load of
+   * a few hundred thousand rows then grew the QuickJS heap by kilobytes per
+   * row until the runtime's memory limit, where an allocation failed and the
+   * backend crashed.
+   */
+  for (int i = 0; i < 10; i++) {
+    JS_FreeValue(context->ctx, argv[i]);
+  }
 
   MemoryContextSwitchTo(old_context);
   return result;
