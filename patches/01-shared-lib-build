@@ -7,7 +7,7 @@ index cf88a72..2643deb 100644
  OBJDIR=.obj
 
 +# force -fPIC for compilation
-+CFLAGS += -fPIC
++CFLAGS += -fPIC -fvisibility=hidden
 +
  ifdef CONFIG_ASAN
  OBJDIR:=$(OBJDIR)/asan
