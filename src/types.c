@@ -11,6 +11,7 @@
 #else
 #include "utils/hashutils.h"
 #endif
+#include "common/shortest_dec.h"
 #include "executor/spi.h"
 #include "fmgr.h"
 #include "funcapi.h"
@@ -2460,6 +2461,37 @@ static double pljs_numeric_to_double(Datum arg) {
 }
 
 /**
+ * @brief Converts a Javascript double to a `NUMERIC` #Datum.
+ *
+ * Writes the shortest decimal text that reads back as the same double --
+ * what Javascript prints for the number, and what `float8out()` writes --
+ * and parses it with `numeric_in()`.  `float8_numeric()`, which this
+ * replaces, keeps `DBL_DIG` (15) significant digits, so it rounded every
+ * number with more: 0.1 + 0.2 (0.30000000000000004) became 0.3, and
+ * 9007199254740993 became 9007199254740990.  A trigger that returned `NEW`
+ * wrote every number of every `JSONB` column back rounded, whether it
+ * changed the column or not.
+ *
+ * `NaN` and the infinities have no shortest text; they go through
+ * `float8_numeric()` as before.
+ *
+ * @param in @c double - the value to convert
+ * @returns #Datum of type `Numeric`
+ */
+static Datum pljs_double_to_numeric(double in) {
+  char buf[DOUBLE_SHORTEST_DECIMAL_LEN];
+
+  if (!isfinite(in)) {
+    return DirectFunctionCall1(float8_numeric, Float8GetDatum(in));
+  }
+
+  double_to_shortest_decimal_buf(in, buf);
+
+  return DirectFunctionCall3(numeric_in, CStringGetDatum(buf),
+                             ObjectIdGetDatum(InvalidOid), Int32GetDatum(-1));
+}
+
+/**
  * @brief Makes a copy of a #text type from Postgres and returns a `cstring`.
  *
  * Takes the input of a Postgres `TEXT` field, allocates memory in the
@@ -4298,7 +4330,7 @@ static Datum pljs_jsvalue_to_datum_internal(pljs_type_io *io, int32 typmod,
       pljs_ereport_js_exception(ctx);
     }
 
-    return DirectFunctionCall1(float8_numeric, Float8GetDatum((float8)in));
+    return pljs_double_to_numeric(in);
   }
 
   case NAMEOID: {
@@ -5348,8 +5380,7 @@ static JsonbValue *jsonb_from_value(JSValue value, JsonbBuildState *pstate,
      * hold: a cast to text and back, COPY and a restore all failed on them.
      */
     if (isfinite(in)) {
-      val.val.numeric = DatumGetNumeric(
-          DirectFunctionCall1(float8_numeric, Float8GetDatum((float8)in)));
+      val.val.numeric = DatumGetNumeric(pljs_double_to_numeric(in));
       val.type = jbvNumeric;
     } else {
       val.type = jbvNull;

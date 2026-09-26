@@ -69,7 +69,7 @@ $$ LANGUAGE pljs;
 SELECT nsp_numeric('12345678901234567890.123456789') AS numeric_exact;
     numeric_exact     
 ----------------------
- 12345678901234600000
+ 12345678901234567000
 (1 row)
 
 -- The non-string paths are unchanged: a BigInt is still marshalled directly, and
