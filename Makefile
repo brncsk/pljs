@@ -134,7 +134,8 @@ REGRESS = init-extension function json jsonb json_conv types bytea context \
 	language_handler_limits \
 	tle_modules \
 	pg_number_shortest_text \
-	pg_lazy_trigger_rows
+	pg_lazy_trigger_rows \
+	pg_subtransaction_aborts
 
 all: deps/quickjs/quickjs.h deps/quickjs/libquickjs.a $(EXTENSION_SQL)
 

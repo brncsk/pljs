@@ -205,6 +205,9 @@ void _PG_init(void) {
   // Initialize the GUCs.
   pljs_guc_init();
 
+  // Count the subtransactions the backend rolls back (pljs.subtransaction_aborts()).
+  pljs_subtransaction_aborts_init();
+
   // Set up the quickjs runtime.
   pljs_runtime_init();
 

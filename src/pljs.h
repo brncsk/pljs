@@ -299,6 +299,7 @@ extern PGDLLEXPORT void pljs_setup_namespace(JSContext *ctx);
 // finalizer reclaims the SPI plan).  Must run once, after the runtime exists
 // and before any JSContext is created.
 void pljs_register_js_classes(JSRuntime *rt);
+void pljs_subtransaction_aborts_init(void);
 
 // Throw a Javascript error
 JSValue js_throw(const char *, JSContext *);
