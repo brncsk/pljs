@@ -1,5 +1,6 @@
 #include "postgres.h"
 
+#include "catalog/pg_type.h"
 #include "catalog/pg_type_d.h"
 #include "common/shortest_dec.h"
 #include "executor/spi.h"
@@ -573,6 +574,36 @@ static JSValue pljs_datum_to_jsvalue_fallback(Datum arg, pljs_type type,
   char *str;
   JSValue ret;
 
+  /*
+   * A pseudo-type (`anyelement`, `anyarray`, ...) has no output function; its
+   * value reaches this conversion only where the real type is not resolved,
+   * such as the argument of a polymorphic window function.  JavaScript can
+   * then only pass the value on, so it carries the datum as it is: the
+   * integer of a type passed by value (a BigInt for an 8-byte one, whose bits
+   * a double would round), the bytes of one passed by reference.
+   * pljs_jsvalue_to_datum_fallback() turns it back into the same datum.
+   */
+  if (get_typtype(type.typid) == TYPTYPE_PSEUDO) {
+    if (type.byval) {
+      return type.length > 4 ? JS_NewBigInt64(ctx, (int64)arg)
+                             : JS_NewInt32(ctx, DatumGetInt32(arg));
+    }
+
+    if (type.length == -1) {
+      struct varlena *vl = PG_DETOAST_DATUM_PACKED(arg);
+
+      ret = JS_NewStringLen(ctx, VARDATA_ANY(vl), VARSIZE_ANY_EXHDR(vl));
+
+      if (vl != (struct varlena *)DatumGetPointer(arg)) {
+        pfree(vl);
+      }
+
+      return ret;
+    }
+
+    return JS_NewStringLen(ctx, DatumGetPointer(arg), type.length);
+  }
+
   getTypeOutputInfo(type.typid, &typoutput, &typisvarlena);
   str = OidOutputFunctionCall(typoutput, arg);
   ret = JS_NewString(ctx, str);
@@ -1110,6 +1141,42 @@ static Datum pljs_jsvalue_to_datum_fallback(JSValue value, bool *is_null,
    * passed by value goes the same way: an enum label written from
    * JavaScript is text, not the OID a 32-bit conversion would make of it.
    */
+  // A pseudo-type's datum, as pljs_datum_to_jsvalue_fallback() carried it.
+  if (get_typtype(type.typid) == TYPTYPE_PSEUDO) {
+    if (type.byval) {
+      int64_t v;
+
+      if (JS_IsBigInt(ctx, value)) {
+        JS_ToBigInt64(ctx, &v, value);
+        return Int64GetDatum(v);
+      }
+
+      JS_ToInt64(ctx, &v, value);
+
+      return Int32GetDatum((int32)v);
+    }
+
+    size_t length;
+    const char *data = JS_ToCStringLen(ctx, &length, value);
+
+    if (type.length == -1) {
+      struct varlena *out = (struct varlena *)palloc(VARHDRSZ + length);
+
+      memcpy(VARDATA(out), data, length);
+      SET_VARSIZE(out, VARHDRSZ + length);
+      ret = PointerGetDatum(out);
+    } else {
+      char *out = palloc0(type.length);
+
+      memcpy(out, data, Min(length, (size_t)type.length));
+      ret = PointerGetDatum(out);
+    }
+
+    JS_FreeCString(ctx, data);
+
+    return ret;
+  }
+
   ret = pljs_string_to_datum_via_input(type.typid, value, ctx);
 
   return ret;
