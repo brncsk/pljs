@@ -22,6 +22,9 @@
 #include <string.h>
 #include <time.h>
 
+static Datum pljs_string_to_datum_via_input(Oid typid, JSValueConst val,
+                                            JSContext *ctx);
+
 /*
  * Error handling helper macros for consistent error patterns.
  */
@@ -523,37 +526,25 @@ JSValue pljs_datum_to_array(pljs_type *type, Datum arg, JSContext *ctx) {
  */
 static JSValue pljs_datum_to_jsvalue_fallback(Datum arg, pljs_type type,
                                               JSContext *ctx) {
-  JSValue ret = JS_UNDEFINED;
+  /*
+   * A type without a case of its own (uuid, ltree, inet, an enum, an
+   * extension type) reaches JavaScript as the text its output function
+   * produces, the way psql shows it. Copying the datum's bytes into a
+   * string, as this did before for a type passed by reference, handed
+   * JavaScript the binary representation: a uuid became sixteen bytes read
+   * as UTF-8, and writing it back corrupted the value. A type passed by
+   * value arrived as the integer the datum holds, which for an enum is the
+   * OID of its label, not the label.
+   */
+  Oid typoutput;
+  bool typisvarlena;
+  char *str;
+  JSValue ret;
 
-  if (type.byval) {
-    ret = JS_NewInt32(ctx, arg);
-  } else {
-    // If this is a variable length type, make a copy of it.
-    if (type.length == -1) {
-      /*
-       * The datum may be compressed, stored out of line, or carry a 1-byte
-       * short header, so it has to be detoasted before it can be read.
-       * VARDATA() assumes a 4-byte header: pairing it with
-       * VARSIZE_ANY_EXHDR() skipped three bytes into a packed value's payload
-       * and read three bytes past its end.  VARDATA_ANY() is the accessor
-       * that matches VARSIZE_ANY_EXHDR().
-       */
-      struct varlena *vl = PG_DETOAST_DATUM_PACKED(arg);
-
-      ret = JS_NewStringLen(ctx, VARDATA_ANY(vl), VARSIZE_ANY_EXHDR(vl));
-      JS_SetPropertyStr(ctx, ret, "length",
-                        JS_NewInt32(ctx, VARSIZE_ANY_EXHDR(vl)));
-
-      // Only free what detoasting allocated: an already-unpacked datum is
-      // returned as-is and belongs to the caller.
-      if (vl != (struct varlena *)DatumGetPointer(arg)) {
-        pfree(vl);
-      }
-    } else {
-      ret = JS_NewStringLen(ctx, (char *)arg, type.length);
-      JS_SetPropertyStr(ctx, ret, "length", JS_NewInt32(ctx, type.length));
-    }
-  }
+  getTypeOutputInfo(type.typid, &typoutput, &typisvarlena);
+  str = OidOutputFunctionCall(typoutput, arg);
+  ret = JS_NewString(ctx, str);
+  pfree(str);
 
   return ret;
 }
@@ -1080,40 +1071,14 @@ static Datum pljs_jsvalue_to_datum_fallback(JSValue value, bool *is_null,
     return (Datum)0;
   }
 
-  // If the type is by value, it's a 32bit value.
-  if (type.byval) {
-    int32_t v;
-    ret = JS_ToInt32(ctx, &v, value);
-
-    ret = v;
-  } else {
-    // Get a copy of the data, as well as its length.
-    size_t length;
-    const char *js_data = JS_ToCStringLen(ctx, &length, value);
-
-    //  If this is a variable length array then we return a `varlena`.
-    if (type.length == -1) {
-      //  Allocate a new cstring of the length of the type.
-      struct varlena *return_data = (struct varlena *)palloc(VARHDRSZ + length);
-
-      // Copy in the data and set the size.
-      memcpy(VARDATA(return_data), js_data, length);
-      SET_VARSIZE(return_data, length + VARHDRSZ);
-
-      ret = PointerGetDatum(return_data);
-    } else if (type.length > 0) {
-      // Allocate the memory for the type.
-      char *return_data = palloc0(type.length);
-
-      if (length < (size_t)type.length) {
-        memcpy(return_data, js_data, length);
-      } else {
-        memcpy(return_data, js_data, type.length);
-      }
-
-      ret = PointerGetDatum(return_data);
-    }
-  }
+  /*
+   * The counterpart of the output-function conversion above: the value is
+   * the text form of the type, and its input function turns it back into a
+   * datum, raising on text that is not a valid value of the type. A type
+   * passed by value goes the same way: an enum label written from
+   * JavaScript is text, not the OID a 32-bit conversion would make of it.
+   */
+  ret = pljs_string_to_datum_via_input(type.typid, value, ctx);
 
   return ret;
 }
