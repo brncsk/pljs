@@ -1857,6 +1857,394 @@ JSValue pljs_tuple_to_jsvalue(TupleDesc tupledesc, HeapTuple heap_tuple,
   return obj;
 }
 
+/*
+ * A trigger's `NEW` and `OLD` as lazy rows.
+ *
+ * A trigger function receives the whole row twice, and converting every
+ * column of both into Javascript was most of what a call cost: a `jsonb`
+ * column becomes a tree of objects, and a function that reads two columns,
+ * or returns at once, paid for all of them.  Returning `NEW` then converted
+ * every column back.
+ *
+ * A lazy row is an object whose columns are accessor properties.  The first
+ * read of a column converts it from the tuple and replaces the accessor with
+ * an ordinary data property holding the value, so the value is converted
+ * once and a change to it (`NEW.doc.x = 1`) stays.  A write replaces the
+ * accessor the same way.  The properties are enumerable, so `Object.keys()`,
+ * a spread and `JSON.stringify()` see every column, and read them.
+ *
+ * When the function returns the row, a column that still holds its accessor
+ * was neither read nor written, and its datum is copied from the tuple
+ * without a conversion.  A row returned with every accessor in place is the
+ * trigger's own tuple, returned as it is.
+ *
+ * The tuple lives only as long as the call.  When the call ends, a row that
+ * the function kept (in a global, a cache, a closure: its reference count
+ * is above the one this code holds) has its remaining columns converted, so
+ * it reads the same afterwards; then the row forgets the tuple.
+ *
+ * The accessors are shared: one getter and one setter per column number,
+ * made once per context and kept in the context's opaque slot.
+ */
+JSClassID pljs_row_class_id;
+
+static const JSClassDef pljs_row_class = {"PljsRow", .finalizer = NULL};
+
+/* What a lazy row holds while its call runs. */
+typedef struct pljs_row {
+  HeapTuple tuple;
+  TupleDesc tupdesc;
+} pljs_row;
+
+/* The accessors of one context, by column number. */
+typedef struct pljs_row_accessors {
+  int length;
+  JSValue *getters;
+  JSValue *setters;
+} pljs_row_accessors;
+
+/**
+ * @brief Registers the class of a lazy row with the runtime.
+ *
+ * @param rt #JSRuntime - the runtime
+ */
+void pljs_row_register_class(JSRuntime *rt) {
+  JS_NewClassID(&pljs_row_class_id);
+  JS_NewClass(rt, pljs_row_class_id, &pljs_row_class);
+}
+
+/**
+ * @brief Gives the lazy rows of a context `Object.prototype`.
+ *
+ * Without it a row of the class has no prototype, and `NEW.hasOwnProperty`
+ * or a template string of a row fail.
+ *
+ * @param ctx #JSContext - the context
+ */
+void pljs_row_setup_context(JSContext *ctx) {
+  JSValue global = JS_GetGlobalObject(ctx);
+  JSValue object = JS_GetPropertyStr(ctx, global, "Object");
+
+  JS_SetClassProto(ctx, pljs_row_class_id,
+                   JS_GetPropertyStr(ctx, object, "prototype"));
+  JS_FreeValue(ctx, object);
+  JS_FreeValue(ctx, global);
+}
+
+/**
+ * @brief Converts column `i` of a lazy row and sets it as a data property.
+ *
+ * A Postgres error in the conversion becomes a Javascript exception: this
+ * runs inside the interpreter, which a `longjmp()` must not cross.
+ *
+ * @returns #JSValue the value, or an exception
+ */
+static JSValue pljs_row_column(JSContext *ctx, JSValueConst obj,
+                               pljs_row *row, int i) {
+  Form_pg_attribute att = TupleDescAttr(row->tupdesc, i);
+  MemoryContext mcontext = CurrentMemoryContext;
+  JSValue value = JS_UNDEFINED;
+
+  PG_TRY();
+  {
+    bool isnull;
+    Datum datum = heap_getattr(row->tuple, i + 1, row->tupdesc, &isnull);
+
+    value = pljs_datum_to_jsvalue(att->atttypid, datum, isnull, true, ctx);
+  }
+  PG_CATCH();
+  {
+    MemoryContextSwitchTo(mcontext);
+    ErrorData *edata = CopyErrorData();
+    FlushErrorState();
+    JSValue error = js_throw_error_data(edata, ctx);
+    FreeErrorData(edata);
+
+    return error;
+  }
+  PG_END_TRY();
+
+  JSAtom atom = JS_NewAtom(ctx, NameStr(att->attname));
+
+  JS_DefinePropertyValue(ctx, obj, atom, JS_DupValue(ctx, value),
+                         JS_PROP_C_W_E);
+  JS_FreeAtom(ctx, atom);
+
+  return value;
+}
+
+/* The getter of column `magic`: converts it on the first read. */
+static JSValue pljs_row_get(JSContext *ctx, JSValueConst this_val, int magic) {
+  pljs_row *row = JS_GetOpaque(this_val, pljs_row_class_id);
+
+  if (row == NULL) {
+    return JS_UNDEFINED;
+  }
+
+  return pljs_row_column(ctx, this_val, row, magic);
+}
+
+/* The setter of column `magic`: the value replaces the accessor. */
+static JSValue pljs_row_set(JSContext *ctx, JSValueConst this_val,
+                            JSValueConst value, int magic) {
+  pljs_row *row = JS_GetOpaque(this_val, pljs_row_class_id);
+
+  if (row == NULL) {
+    return JS_UNDEFINED;
+  }
+
+  JSAtom atom =
+      JS_NewAtom(ctx, NameStr(TupleDescAttr(row->tupdesc, magic)->attname));
+
+  JS_DefinePropertyValue(ctx, this_val, atom, JS_DupValue(ctx, value),
+                         JS_PROP_C_W_E);
+  JS_FreeAtom(ctx, atom);
+
+  return JS_UNDEFINED;
+}
+
+/**
+ * @brief The shared accessors of a context, for at least `natts` columns.
+ */
+static pljs_row_accessors *pljs_row_accessors_for(JSContext *ctx, int natts) {
+  pljs_row_accessors *acc = JS_GetContextOpaque(ctx);
+
+  if (acc == NULL) {
+    acc = MemoryContextAllocZero(TopMemoryContext, sizeof(pljs_row_accessors));
+    JS_SetContextOpaque(ctx, acc);
+  }
+
+  if (acc->length < natts) {
+    int length = Max(natts, 2 * acc->length);
+    JSValue *getters =
+        MemoryContextAlloc(TopMemoryContext, sizeof(JSValue) * length);
+    JSValue *setters =
+        MemoryContextAlloc(TopMemoryContext, sizeof(JSValue) * length);
+
+    for (int i = 0; i < length; i++) {
+      if (i < acc->length) {
+        getters[i] = acc->getters[i];
+        setters[i] = acc->setters[i];
+      } else {
+        getters[i] = JS_NewCFunctionMagic(
+            ctx, (JSCFunctionMagic *)pljs_row_get, "get", 0,
+            JS_CFUNC_getter_magic, i);
+        setters[i] = JS_NewCFunctionMagic(
+            ctx, (JSCFunctionMagic *)pljs_row_set, "set", 1,
+            JS_CFUNC_setter_magic, i);
+      }
+    }
+
+    if (acc->getters != NULL) {
+      pfree(acc->getters);
+      pfree(acc->setters);
+    }
+
+    acc->getters = getters;
+    acc->setters = setters;
+    acc->length = length;
+  }
+
+  return acc;
+}
+
+/**
+ * @brief Releases the shared accessors of a context before it is freed.
+ *
+ * @param ctx #JSContext - the context
+ */
+void pljs_row_free_context(JSContext *ctx) {
+  pljs_row_accessors *acc = JS_GetContextOpaque(ctx);
+
+  if (acc == NULL) {
+    return;
+  }
+
+  for (int i = 0; i < acc->length; i++) {
+    JS_FreeValue(ctx, acc->getters[i]);
+    JS_FreeValue(ctx, acc->setters[i]);
+  }
+
+  pfree(acc->getters);
+  pfree(acc->setters);
+  pfree(acc);
+  JS_SetContextOpaque(ctx, NULL);
+}
+
+/**
+ * @brief Whether column `i` of a lazy row still holds its shared accessor.
+ */
+static bool pljs_row_untouched(JSContext *ctx, JSValueConst obj, int i,
+                               JSAtom atom) {
+  pljs_row_accessors *acc = JS_GetContextOpaque(ctx);
+  JSPropertyDescriptor desc;
+  bool untouched = false;
+
+  if (JS_GetOwnProperty(ctx, &desc, obj, atom) != 1) {
+    return false;
+  }
+
+  if ((desc.flags & JS_PROP_GETSET) && acc != NULL && i < acc->length &&
+      JS_VALUE_GET_PTR(desc.getter) == JS_VALUE_GET_PTR(acc->getters[i])) {
+    untouched = true;
+  }
+
+  JS_FreeValue(ctx, desc.getter);
+  JS_FreeValue(ctx, desc.setter);
+  JS_FreeValue(ctx, desc.value);
+
+  return untouched;
+}
+
+/**
+ * @brief Makes the lazy row of a trigger's tuple.
+ *
+ * @param tupdesc #TupleDesc - the relation's descriptor
+ * @param tuple #HeapTuple - the tuple; it must outlive the call
+ * @param ctx #JSContext - Javascript context to execute in
+ * @returns #JSValue the row
+ */
+JSValue pljs_tuple_to_lazy_jsvalue(TupleDesc tupdesc, HeapTuple tuple,
+                                   JSContext *ctx) {
+  pljs_row_accessors *acc = pljs_row_accessors_for(ctx, tupdesc->natts);
+  JSValue obj = JS_NewObjectClass(ctx, pljs_row_class_id);
+  pljs_row *row = palloc(sizeof(pljs_row));
+
+  row->tuple = tuple;
+  row->tupdesc = tupdesc;
+  JS_SetOpaque(obj, row);
+
+  for (int i = 0; i < tupdesc->natts; i++) {
+    Form_pg_attribute att = TupleDescAttr(tupdesc, i);
+
+    if (att->attisdropped) {
+      continue;
+    }
+
+    JSAtom atom = JS_NewAtom(ctx, NameStr(att->attname));
+
+    JS_DefinePropertyGetSet(ctx, obj, atom, JS_DupValue(ctx, acc->getters[i]),
+                            JS_DupValue(ctx, acc->setters[i]),
+                            JS_PROP_CONFIGURABLE | JS_PROP_ENUMERABLE);
+    JS_FreeAtom(ctx, atom);
+  }
+
+  return obj;
+}
+
+/**
+ * @brief The tuple a returned lazy row stands for, or NULL.
+ *
+ * NULL when `obj` is not a lazy row of a tuple with this descriptor.  A row
+ * with every accessor in place is its own tuple.  Otherwise a new tuple: a
+ * column the function did not touch is copied from the row's tuple, and
+ * the others are converted as `pljs_jsvalue_to_record()` converts them.
+ *
+ * @param obj #JSValue - what the trigger function returned
+ * @param tupdesc #TupleDesc - the relation's descriptor
+ * @param ctx #JSContext - Javascript context to execute in
+ * @returns #HeapTuple the tuple, or NULL
+ */
+HeapTuple pljs_lazy_row_to_tuple(JSValueConst obj, TupleDesc tupdesc,
+                                 JSContext *ctx) {
+  pljs_row *row = JS_GetOpaque(obj, pljs_row_class_id);
+
+  if (row == NULL || row->tupdesc != tupdesc) {
+    return NULL;
+  }
+
+  int natts = tupdesc->natts;
+  Datum *values = (Datum *)palloc0(sizeof(Datum) * natts);
+  bool *nulls = (bool *)palloc0(sizeof(bool) * natts);
+  bool untouched = true;
+
+  for (int c = 0; c < natts; c++) {
+    Form_pg_attribute att = TupleDescAttr(tupdesc, c);
+
+    if (att->attisdropped) {
+      nulls[c] = true;
+      continue;
+    }
+
+    JSAtom atom = JS_NewAtom(ctx, NameStr(att->attname));
+
+    if (pljs_row_untouched(ctx, obj, c, atom)) {
+      values[c] = heap_getattr(row->tuple, c + 1, tupdesc, &nulls[c]);
+    } else {
+      JSValue o = JS_GetProperty(ctx, obj, atom);
+
+      untouched = false;
+
+      if (JS_IsNull(o) || JS_IsUndefined(o)) {
+        nulls[c] = true;
+      } else {
+        values[c] =
+            pljs_jsvalue_to_datum(att->atttypid, o, &nulls[c], ctx, NULL);
+      }
+
+      JS_FreeValue(ctx, o);
+    }
+
+    JS_FreeAtom(ctx, atom);
+  }
+
+  HeapTuple tuple =
+      untouched ? row->tuple : heap_form_tuple(tupdesc, values, nulls);
+
+  pfree(values);
+  pfree(nulls);
+
+  return tuple;
+}
+
+/**
+ * @brief Releases a trigger's argument when its call ends.
+ *
+ * A lazy row the function kept has its untouched columns converted first,
+ * while its tuple is still valid; then it forgets the tuple.  Any other
+ * value is freed as it is.
+ *
+ * @param obj #JSValue - the argument
+ * @param ctx #JSContext - Javascript context to execute in
+ */
+void pljs_lazy_row_release(JSValue obj, JSContext *ctx) {
+  pljs_row *row = JS_VALUE_GET_TAG(obj) == JS_TAG_OBJECT
+                      ? JS_GetOpaque(obj, pljs_row_class_id)
+                      : NULL;
+
+  if (row != NULL) {
+    JSRefCountHeader *header = (JSRefCountHeader *)JS_VALUE_GET_PTR(obj);
+
+    if (header->ref_count > 1) {
+      for (int c = 0; c < row->tupdesc->natts; c++) {
+        Form_pg_attribute att = TupleDescAttr(row->tupdesc, c);
+
+        if (att->attisdropped) {
+          continue;
+        }
+
+        JSAtom atom = JS_NewAtom(ctx, NameStr(att->attname));
+
+        if (pljs_row_untouched(ctx, obj, c, atom)) {
+          JSValue value = pljs_row_column(ctx, obj, row, c);
+
+          if (JS_IsException(value)) {
+            JS_FreeValue(ctx, JS_GetException(ctx));
+          } else {
+            JS_FreeValue(ctx, value);
+          }
+        }
+
+        JS_FreeAtom(ctx, atom);
+      }
+    }
+
+    JS_SetOpaque(obj, NULL);
+  }
+
+  JS_FreeValue(ctx, obj);
+}
+
 /**
  * @brief Converts a Postgres SPI result to a Javascript value.
  *

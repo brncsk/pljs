@@ -138,6 +138,7 @@ void pljs_cache_reset(void) {
       }
 
       if (ctx_hvalue->ctx != NULL) {
+        pljs_row_free_context(ctx_hvalue->ctx);
         JS_FreeContext(ctx_hvalue->ctx);
         ctx_hvalue->ctx = NULL;
       }

@@ -151,6 +151,7 @@ typedef struct pljs_window_storage {
 } pljs_window_storage;
 
 extern JSClassID js_prepared_statement_handle_id;
+extern JSClassID pljs_row_class_id;
 extern JSClassID js_cursor_handle_id;
 extern JSClassID js_pljs_storage_id;
 extern JSClassID js_window_id;
@@ -212,6 +213,12 @@ JSValue pljs_datum_to_jsvalue(Oid argtype, Datum arg, bool is_null,
 JSValue pljs_datum_to_array(pljs_type *type, Datum arg, JSContext *ctx);
 JSValue pljs_datum_to_object(pljs_type *type, Datum arg, JSContext *ctx);
 JSValue pljs_tuple_to_jsvalue(TupleDesc, HeapTuple, JSContext *ctx);
+JSValue pljs_tuple_to_lazy_jsvalue(TupleDesc, HeapTuple, JSContext *ctx);
+HeapTuple pljs_lazy_row_to_tuple(JSValueConst, TupleDesc, JSContext *);
+void pljs_lazy_row_release(JSValue, JSContext *);
+void pljs_row_register_class(JSRuntime *);
+void pljs_row_setup_context(JSContext *);
+void pljs_row_free_context(JSContext *);
 JSValue pljs_spi_result_to_jsvalue(int, JSContext *);
 
 // To Postgres

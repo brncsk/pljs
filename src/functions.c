@@ -109,6 +109,9 @@ void pljs_setup_namespace(JSContext *ctx) {
   // Get a copy of the global object.
   JSValue global_obj = JS_GetGlobalObject(ctx);
 
+  // The prototype of a trigger's NEW and OLD.
+  pljs_row_setup_context(ctx);
+
   // Set up the pljs namespace and functions.
   JSValue pljs = JS_NewObjectClass(ctx, js_pljs_storage_id);
 
@@ -541,6 +544,7 @@ void pljs_register_js_classes(JSRuntime *runtime) {
   JS_NewClassID(&js_prepared_statement_handle_id);
   JS_NewClass(runtime, js_prepared_statement_handle_id,
               &pljs_plan_handle_class);
+  pljs_row_register_class(runtime);
 }
 
 /**

@@ -1328,11 +1328,15 @@ static Datum call_trigger(FunctionCallInfo fcinfo, pljs_context *context) {
   if (TRIGGER_FIRED_FOR_ROW(event)) {
     TupleDesc tupdesc = RelationGetDescr(rel);
 
+    /*
+     * NEW and OLD are lazy rows: a column is converted when the function
+     * first reads it (see pljs_tuple_to_lazy_jsvalue()).
+     */
     if (TRIGGER_FIRED_BY_INSERT(event)) {
       result = PointerGetDatum(trig->tg_trigtuple);
       // NEW
-      argv[0] =
-          pljs_tuple_to_jsvalue(tupdesc, trig->tg_trigtuple, context->ctx);
+      argv[0] = pljs_tuple_to_lazy_jsvalue(tupdesc, trig->tg_trigtuple,
+                                           context->ctx);
       // OLD
       argv[1] = JS_UNDEFINED;
     } else if (TRIGGER_FIRED_BY_DELETE(event)) {
@@ -1340,15 +1344,16 @@ static Datum call_trigger(FunctionCallInfo fcinfo, pljs_context *context) {
       // NEW
       argv[0] = JS_UNDEFINED;
       // OLD
-      argv[1] =
-          pljs_tuple_to_jsvalue(tupdesc, trig->tg_trigtuple, context->ctx);
+      argv[1] = pljs_tuple_to_lazy_jsvalue(tupdesc, trig->tg_trigtuple,
+                                           context->ctx);
     } else if (TRIGGER_FIRED_BY_UPDATE(event)) {
       result = PointerGetDatum(trig->tg_newtuple);
       // NEW
-      argv[0] = pljs_tuple_to_jsvalue(tupdesc, trig->tg_newtuple, context->ctx);
+      argv[0] = pljs_tuple_to_lazy_jsvalue(tupdesc, trig->tg_newtuple,
+                                           context->ctx);
       // OLD
-      argv[1] =
-          pljs_tuple_to_jsvalue(tupdesc, trig->tg_trigtuple, context->ctx);
+      argv[1] = pljs_tuple_to_lazy_jsvalue(tupdesc, trig->tg_trigtuple,
+                                           context->ctx);
     }
   } else {
     argv[0] = argv[1] = JS_UNDEFINED;
@@ -1451,7 +1456,9 @@ static Datum call_trigger(FunctionCallInfo fcinfo, pljs_context *context) {
     char *detail = dump_error(context->ctx, &message, &pg_detail, &sqlstate);
 
     JS_FreeValue(context->ctx, ret);
-    for (int i = 0; i < 10; i++) {
+    pljs_lazy_row_release(argv[0], context->ctx);
+    pljs_lazy_row_release(argv[1], context->ctx);
+    for (int i = 2; i < 10; i++) {
       JS_FreeValue(context->ctx, argv[i]);
     }
     MemoryContextSwitchTo(old_context);
@@ -1463,19 +1470,31 @@ static Datum call_trigger(FunctionCallInfo fcinfo, pljs_context *context) {
                           "execution error");
   }
 
-  if (JS_IsNull(ret) || !TRIGGER_FIRED_FOR_ROW(event)) {
+  /*
+   * Postgres ignores what an AFTER trigger returns, so it is not converted:
+   * returning NEW from one converted every column for nothing.
+   */
+  if (JS_IsNull(ret) || !TRIGGER_FIRED_FOR_ROW(event) ||
+      TRIGGER_FIRED_AFTER(event)) {
     result = PointerGetDatum(NULL);
   } else if (!JS_IsUndefined(ret)) {
 
     TupleDesc tupdesc = RelationGetDescr(rel);
+    HeapTuple tuple = pljs_lazy_row_to_tuple(ret, tupdesc, context->ctx);
 
-    pljs_type type;
-    pljs_type_fill(&type, context->function->rettype);
-    Datum d = pljs_jsvalue_to_record(&type, ret, NULL, tupdesc, context->ctx);
+    if (tuple != NULL) {
+      // NEW or OLD, with the columns the function did not touch as they were.
+      result = PointerGetDatum(tuple);
+    } else {
+      pljs_type type;
+      pljs_type_fill(&type, context->function->rettype);
+      Datum d =
+          pljs_jsvalue_to_record(&type, ret, NULL, tupdesc, context->ctx);
 
-    HeapTupleHeader header = DatumGetHeapTupleHeader(d);
+      HeapTupleHeader header = DatumGetHeapTupleHeader(d);
 
-    result = PointerGetDatum((char *)header - HEAPTUPLESIZE);
+      result = PointerGetDatum((char *)header - HEAPTUPLESIZE);
+    }
   }
 
   JS_FreeValue(context->ctx, ret);
@@ -1488,7 +1507,9 @@ static Datum call_trigger(FunctionCallInfo fcinfo, pljs_context *context) {
    * row until the runtime's memory limit, where an allocation failed and the
    * backend crashed.
    */
-  for (int i = 0; i < 10; i++) {
+  pljs_lazy_row_release(argv[0], context->ctx);
+  pljs_lazy_row_release(argv[1], context->ctx);
+  for (int i = 2; i < 10; i++) {
     JS_FreeValue(context->ctx, argv[i]);
   }
 
