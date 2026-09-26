@@ -106,6 +106,8 @@ static void pljs_cleanup_context(pljs_context_cache_value *cache_entry) {
     }
   }
 
+  /* The shared accessors of its lazy rows; see pljs_row_free_context(). */
+  pljs_row_free_context(ctx);
   JS_FreeContext(ctx);
 }
 
@@ -221,6 +223,7 @@ void pljs_cache_reset(void) {
       }
 
       if (ctx_hvalue->ctx != NULL) {
+        pljs_row_free_context(ctx_hvalue->ctx);
         JS_FreeContext(ctx_hvalue->ctx);
         ctx_hvalue->ctx = NULL;
       }

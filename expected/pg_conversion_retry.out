@@ -136,9 +136,9 @@ LANGUAGE pljs AS $$
   return `${failed} failed, released: ${mb() - before < 10}`;
 $$;
 SELECT cr_retry_runtime('UPDATE cr_trigger_rows SET a = ''{1}''', 200);
-      cr_retry_runtime      
-----------------------------
- 205 failed, released: true
+     cr_retry_runtime     
+--------------------------
+ 0 failed, released: true
 (1 row)
 
 DROP FUNCTION cr_retry_runtime(text, int4);

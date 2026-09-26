@@ -1189,6 +1189,7 @@ JSContext *pljs_create_context(Oid user_id, Oid owner_id) {
   PG_CATCH();
   {
     current_compiling_ctx = prev_compiling_ctx;
+    pljs_row_free_context(ctx);
     JS_FreeContext(ctx);
     PG_RE_THROW();
   }
@@ -2291,6 +2292,7 @@ Datum pljs_call_validator(PG_FUNCTION_ARGS) {
      * references into it.
      */
     JS_FreeValue(ctx, val);
+    pljs_row_free_context(ctx);
     JS_FreeContext(ctx);
 
     pljs_ereport_js_error(message, pg_detail, detail, sqlstate,
@@ -2298,6 +2300,7 @@ Datum pljs_call_validator(PG_FUNCTION_ARGS) {
   }
 
   JS_FreeValue(ctx, val);
+  pljs_row_free_context(ctx);
   JS_FreeContext(ctx);
 
   /*
@@ -2637,21 +2640,25 @@ static Datum call_trigger(FunctionCallInfo fcinfo, pljs_context *context) {
     if (TRIGGER_FIRED_FOR_ROW(event)) {
       TupleDesc tupdesc = RelationGetDescr(rel);
 
+      /*
+       * NEW and OLD are lazy rows: a column is converted when the function
+       * first reads it (see pljs_tuple_to_lazy_jsvalue()).
+       */
       if (TRIGGER_FIRED_BY_INSERT(event)) {
         // NEW
-        argv[0] =
-            pljs_tuple_to_jsvalue(tupdesc, trig->tg_trigtuple, context->ctx);
+        argv[0] = pljs_tuple_to_lazy_jsvalue(tupdesc, trig->tg_trigtuple,
+                                             context->ctx);
       } else if (TRIGGER_FIRED_BY_DELETE(event)) {
         // OLD
-        argv[1] =
-            pljs_tuple_to_jsvalue(tupdesc, trig->tg_trigtuple, context->ctx);
+        argv[1] = pljs_tuple_to_lazy_jsvalue(tupdesc, trig->tg_trigtuple,
+                                             context->ctx);
       } else if (TRIGGER_FIRED_BY_UPDATE(event)) {
         // NEW
-        argv[0] =
-            pljs_tuple_to_jsvalue(tupdesc, trig->tg_newtuple, context->ctx);
+        argv[0] = pljs_tuple_to_lazy_jsvalue(tupdesc, trig->tg_newtuple,
+                                             context->ctx);
         // OLD
-        argv[1] =
-            pljs_tuple_to_jsvalue(tupdesc, trig->tg_trigtuple, context->ctx);
+        argv[1] = pljs_tuple_to_lazy_jsvalue(tupdesc, trig->tg_trigtuple,
+                                             context->ctx);
       }
     }
 
@@ -2716,7 +2723,9 @@ static Datum call_trigger(FunctionCallInfo fcinfo, pljs_context *context) {
   }
   PG_CATCH();
   {
-    for (int i = 0; i < 10; i++) {
+    pljs_lazy_row_release(argv[0], context->ctx);
+    pljs_lazy_row_release(argv[1], context->ctx);
+    for (int i = 2; i < 10; i++) {
       JS_FreeValue(context->ctx, argv[i]);
     }
 
@@ -2761,8 +2770,13 @@ static Datum call_trigger(FunctionCallInfo fcinfo, pljs_context *context) {
 
   JS_FreeValue(context->ctx, running);
 
-  /* JS_Call() took references of its own; see dispatch_call(). */
-  for (int i = 0; i < 10; i++) {
+  /*
+   * JS_Call() took references of its own; see dispatch_call().  NEW and OLD
+   * stay until the result is converted: a returned lazy row reads its
+   * untouched columns from the tuple, and releasing the row first would
+   * convert every column of a row the function returned.
+   */
+  for (int i = 2; i < 10; i++) {
     JS_FreeValue(context->ctx, argv[i]);
   }
 
@@ -2783,6 +2797,8 @@ static Datum call_trigger(FunctionCallInfo fcinfo, pljs_context *context) {
     detail = dump_error(context->ctx, &message, &pg_detail, &sqlstate);
 
     JS_FreeValue(context->ctx, ret);
+    pljs_lazy_row_release(argv[0], context->ctx);
+    pljs_lazy_row_release(argv[1], context->ctx);
 
     /* Before the report, which does not return. */
     SPI_finish();
@@ -2806,24 +2822,43 @@ static Datum call_trigger(FunctionCallInfo fcinfo, pljs_context *context) {
   {
     pljs_raise_if_ending();
 
-    if (JS_IsNull(ret) || !TRIGGER_FIRED_FOR_ROW(event)) {
+    /*
+     * Postgres ignores what an AFTER trigger returns, so it is not converted:
+     * returning NEW from one converted every column for nothing.
+     */
+    if (JS_IsNull(ret) || !TRIGGER_FIRED_FOR_ROW(event) ||
+        TRIGGER_FIRED_AFTER(event)) {
       result = PointerGetDatum(NULL);
     } else if (!JS_IsUndefined(ret)) {
 
       TupleDesc tupdesc = RelationGetDescr(rel);
+      HeapTuple tuple = pljs_lazy_row_to_tuple(ret, tupdesc, context->ctx);
 
-      pljs_type type;
-      pljs_type_fill(&type, context->function->rettype);
-      Datum d = pljs_jsvalue_to_record(&type, ret, NULL, tupdesc, context->ctx);
+      if (tuple != NULL) {
+        // NEW or OLD, with the columns the function did not touch as they were.
+        result = PointerGetDatum(tuple);
+      } else {
+        pljs_type type;
+        pljs_type_fill(&type, context->function->rettype);
+        Datum d =
+            pljs_jsvalue_to_record(&type, ret, NULL, tupdesc, context->ctx);
 
-      HeapTupleHeader header = DatumGetHeapTupleHeader(d);
+        HeapTupleHeader header = DatumGetHeapTupleHeader(d);
 
-      result = PointerGetDatum((char *)header - HEAPTUPLESIZE);
+        result = PointerGetDatum((char *)header - HEAPTUPLESIZE);
+      }
     }
   }
   PG_FINALLY();
   {
+    /*
+     * A row the function kept converts its untouched columns before it
+     * forgets the tuple.  The release swallows a conversion error, so it
+     * does not raise while an error is in flight.
+     */
     JS_FreeValue(context->ctx, ret);
+    pljs_lazy_row_release(argv[0], context->ctx);
+    pljs_lazy_row_release(argv[1], context->ctx);
   }
   PG_END_TRY();
 
