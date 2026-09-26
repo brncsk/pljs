@@ -1,6 +1,7 @@
 #include "postgres.h"
 
 #include "catalog/pg_type_d.h"
+#include "common/shortest_dec.h"
 #include "executor/spi.h"
 #include "fmgr.h"
 #include "funcapi.h"
@@ -237,6 +238,37 @@ static double pljs_numeric_to_double(Datum arg) {
   pljs_free_if_detoasted(numeric, arg);
 
   return value;
+}
+
+/**
+ * @brief Converts a Javascript double to a `NUMERIC` #Datum.
+ *
+ * Writes the shortest decimal text that reads back as the same double --
+ * what Javascript prints for the number, and what `float8out()` writes --
+ * and parses it with `numeric_in()`.  `float8_numeric()`, which this
+ * replaces, keeps `DBL_DIG` (15) significant digits, so it rounded every
+ * number with more: 0.1 + 0.2 (0.30000000000000004) became 0.3, and
+ * 9007199254740993 became 9007199254740990.  A trigger that returned `NEW`
+ * wrote every number of every `JSONB` column back rounded, whether it
+ * changed the column or not.
+ *
+ * `NaN` and the infinities have no shortest text; they go through
+ * `float8_numeric()` as before.
+ *
+ * @param in @c double - the value to convert
+ * @returns #Datum of type `Numeric`
+ */
+static Datum pljs_double_to_numeric(double in) {
+  char buf[DOUBLE_SHORTEST_DECIMAL_LEN];
+
+  if (!isfinite(in)) {
+    return DirectFunctionCall1(float8_numeric, Float8GetDatum(in));
+  }
+
+  double_to_shortest_decimal_buf(in, buf);
+
+  return DirectFunctionCall3(numeric_in, CStringGetDatum(buf),
+                             ObjectIdGetDatum(InvalidOid), Int32GetDatum(-1));
 }
 
 /**
@@ -1476,7 +1508,7 @@ Datum pljs_jsvalue_to_datum(Oid rettype, JSValue val, bool *is_null,
 
       JS_ToFloat64(ctx, &in, val);
 
-      return DirectFunctionCall1(float8_numeric, Float8GetDatum((float8)in));
+      return pljs_double_to_numeric(in);
     }
     break;
   }
@@ -2142,8 +2174,7 @@ static JsonbValue *jsonb_from_value(JSValue value, JsonbBuildState *pstate,
 
       JS_ToFloat64(ctx, &in, value);
 
-      val.val.numeric = DatumGetNumeric(
-          DirectFunctionCall1(float8_numeric, Float8GetDatum((float8)in)));
+      val.val.numeric = DatumGetNumeric(pljs_double_to_numeric(in));
       val.type = jbvNumeric;
     } else if (Is_Date(value)) {
       double in;
