@@ -74,6 +74,8 @@ static JSValue pljs_window_object_to_string(JSContext *, JSValueConst, int,
                                             JSValueConst *);
 static JSValue pljs_subtransaction(JSContext *, JSValueConst, int,
                                    JSValueConst *);
+static JSValue pljs_subtransaction_aborts(JSContext *, JSValueConst, int,
+                                          JSValueConst *);
 
 #ifdef EXPOSE_GC
 static JSValue pljs_gc(JSContext *, JSValueConst, int, JSValueConst *);
@@ -150,6 +152,10 @@ void pljs_setup_namespace(JSContext *ctx) {
   JS_SetPropertyStr(
       ctx, pljs, "subtransaction",
       JS_NewCFunction(ctx, pljs_subtransaction, "subtransaction", 0));
+
+  JS_SetPropertyStr(ctx, pljs, "subtransaction_aborts",
+                    JS_NewCFunction(ctx, pljs_subtransaction_aborts,
+                                    "subtransaction_aborts", 0));
 
 #ifdef EXPOSE_GC
   JS_SetPropertyStr(ctx, pljs, "gc", JS_NewCFunction(ctx, pljs_gc, "gc", 0));
@@ -2328,6 +2334,47 @@ static JSValue pljs_subtransaction(JSContext *ctx, JSValueConst this_val,
   PG_END_TRY();
 
   return result;
+}
+
+/*
+ * The number of subtransactions this backend has rolled back: a savepoint
+ * rolled back, a statement that failed inside one, a pljs.execute() whose
+ * error the function caught, an exception block of another language.
+ *
+ * A function that keeps a value for the transaction -- a table it read once,
+ * a lookup -- keys it by the transaction id.  A rolled-back subtransaction
+ * leaves that id as it was, yet it may have written the rows the value was
+ * read from, and the value then describes rows that no longer exist.  Keying
+ * the value by this number too makes it read again after any rollback.
+ */
+static uint64 subtransaction_aborts = 0;
+
+static void pljs_subxact_callback(SubXactEvent event, SubTransactionId my_subid,
+                                  SubTransactionId parent_subid, void *arg) {
+  if (event == SUBXACT_EVENT_ABORT_SUB) {
+    subtransaction_aborts++;
+  }
+}
+
+/**
+ * @brief Counts the subtransactions the backend rolls back from now on.
+ *
+ * Called once, from _PG_init().
+ */
+void pljs_subxact_init(void) {
+  RegisterSubXactCallback(pljs_subxact_callback, NULL);
+}
+
+/**
+ * @brief Javascript function `pljs.subtransaction_aborts`.
+ *
+ * @returns #JSValue the number of subtransactions the backend has rolled back
+ * since pljs was loaded into it
+ */
+static JSValue pljs_subtransaction_aborts(JSContext *ctx,
+                                          JSValueConst this_val, int argc,
+                                          JSValueConst *argv) {
+  return JS_NewFloat64(ctx, (double)subtransaction_aborts);
 }
 
 #ifdef EXPOSE_GC

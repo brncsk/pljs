@@ -85,7 +85,8 @@ REGRESS = init-extension function json jsonb json_conv types bytea context \
 	pg_array_undefined_elements \
 	pg_number_shortest_text \
 	pg_lazy_trigger_rows \
-	pg_pseudo_type_passthrough
+	pg_pseudo_type_passthrough \
+	pg_subtransaction_aborts
 
 all: deps/quickjs/quickjs.h deps/quickjs/libquickjs.a pljs--$(PLJS_VERSION).sql
 
