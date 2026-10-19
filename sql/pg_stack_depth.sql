@@ -1,10 +1,10 @@
--- NB: some expected output below is QuickJS's own wording ("out of memory",
--- "stack overflow"), which is not part of any stable interface -- it is pinned
--- by the vendored deps/quickjs revision and will churn if that is bumped.  If a
--- QuickJS upgrade fails here, check the message text before assuming a
--- behaviour regression.
+-- NB: some expected output below is QuickJS's own wording (the RangeError
+-- "Maximum call stack size exceeded"), which is not part of any stable
+-- interface -- it is pinned by the deps/quickjs-ng revision and will churn if
+-- that is bumped.  If a QuickJS upgrade fails here, check the message text
+-- before assuming a behaviour regression.
 -- Regression: deep / unbounded JS recursion must raise a catchable
--- "stack overflow" error and leave the backend alive -- never crash it with a
+-- stack overflow error and leave the backend alive -- never crash it with a
 -- C-stack SIGSEGV.
 --
 -- QuickJS only performs stack checks when built with CONFIG_STACK_CHECK, and
@@ -38,7 +38,7 @@
 CREATE EXTENSION IF NOT EXISTS pljs;
 
 -- Unbounded self-recursion in an anonymous block.  Use terse verbosity: the
--- InternalError stack trace carried in DETAIL is machine dependent (its length
+-- RangeError stack trace carried in DETAIL is machine dependent (its length
 -- depends on frame size), so it must not appear in the portable expected file.
 \set VERBOSITY terse
 DO $$ function r(n) { return r(n + 1); } r(0); $$ LANGUAGE pljs;

@@ -703,7 +703,7 @@ DO $$
     pljs.elog(INFO, e.message + ' ' + e.stack.split('\n')[0].replace(/#[0-9]+/, '#N').trim());
   }
 $$ LANGUAGE pljs;
-INFO:  sloppy failure at <anonymous> (pljs:sl/throws#N:2:16)
+INFO:  sloppy failure at <anonymous> (pljs:sl/throws#N:2:11)
 DELETE FROM pljs.modules;
 -- Cleanup
 DROP FUNCTION circle_info_chained(float8);

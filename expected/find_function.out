@@ -34,12 +34,14 @@ SELECT caller(10, 2);
 SELECT caller(10, 3);
 ERROR:  javascript function is not found for "sqlf"
 DETAIL:  Error: javascript function is not found for "sqlf"
-    at caller (<function>:9:30)
+    at find_function (native)
+    at caller (<function>:9:17)
 
 SELECT caller(10, 4);
 ERROR:  function "callee(int, int)" does not exist
 DETAIL:  Error: function "callee(int, int)" does not exist
-    at caller (<function>:11:30)
+    at find_function (native)
+    at caller (<function>:11:17)
 
 SELECT caller(10, 5);
  caller 

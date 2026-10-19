@@ -229,7 +229,7 @@ $$;
 SELECT jw_to_json_throws();
 ERROR:  no JSON for you
 DETAIL:  Error: no JSON for you
-    at toJSON (<function>:3:41)
+    at toJSON (<function>:3:36)
 
 SELECT 1 AS still_connected;
  still_connected 

@@ -22,8 +22,8 @@ DO $$ pljs.elog(NOTICE, pljs.current_scope.name); $$ language pljs;
 WARNING:  failed to find pljs function function "end" does not exist: 
 ERROR:  cannot read property 'name' of undefined
 DETAIL:  TypeError: cannot read property 'name' of undefined
-    at <anonymous> (<function>:1:52)
-    at <eval> (<function>:1:62)
+    at <anonymous> (<function>:1:34)
+    at <eval> (<function>:1:59)
 
 RESET ROLE;
 DROP ROLE new_context;

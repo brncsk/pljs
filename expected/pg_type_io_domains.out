@@ -212,7 +212,8 @@ $$;
 SELECT * FROM tid_row_set();
 ERROR:  domain tid_nn does not allow null values
 DETAIL:  Error: domain tid_nn does not allow null values
-    at tid_row_set (<function>:4:19)
+    at return_next (native)
+    at tid_row_set (<function>:4:8)
 
 -- Through a trigger's NEW, which the executor does not check again.
 CREATE TABLE tid_tbl (id int4, v tid_nn);

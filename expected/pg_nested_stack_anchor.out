@@ -8,7 +8,8 @@
 -- consumes C stack the anchor knows nothing about -- so the guard fires while there
 -- is plenty of stack left, rejecting legitimate work.
 --
--- Measured before the fix: nest(250) failed with QuickJS's "stack overflow" while
+-- Measured before the fix: nest(250) failed with QuickJS's stack overflow error
+-- (QuickJS-ng words it "Maximum call stack size exceeded") while
 -- nest(150) succeeded.  After it, nest(300) succeeds and deep nesting is stopped by
 -- PostgreSQL's own check_stack_depth() instead.
 --
@@ -18,7 +19,7 @@
 -- is what makes this a functional bug and not merely a weakened guard: correct work is
 -- refused.
 --
--- The fix is JS_UpdateStackTop(), which the vendored QuickJS exports, called at each
+-- The fix is JS_UpdateStackTop(), which QuickJS exports, called at each
 -- entry into JS so the budget is measured from where that call actually begins.
 --
 -- This test asserts the *kind* of limit rather than a specific depth, because the
@@ -56,7 +57,7 @@ BEGIN
     EXCEPTION WHEN OTHERS THEN
       IF SQLERRM LIKE '%stack depth limit exceeded%' THEN
         RETURN 'bounded by PostgreSQL check_stack_depth';
-      ELSIF SQLERRM LIKE '%stack overflow%' THEN
+      ELSIF SQLERRM LIKE '%Maximum call stack size exceeded%' THEN
         RETURN 'bounded by QuickJS stack overflow (anchor is wrong)';
       ELSE
         RETURN 'unexpected: ' || SQLERRM;

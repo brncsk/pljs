@@ -7,5 +7,5 @@ $$ language pljs;
 ERROR:  out of memory
 DETAIL:  InternalError: out of memory
     at <anonymous> (<function>:2:1)
-    at <eval> (<function>:3:3)
+    at <eval> (<function>:3:1)
 

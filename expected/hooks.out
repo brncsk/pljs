@@ -448,7 +448,8 @@ $$ LANGUAGE pljs;
 SET pljs.executor_end_hook = 'hook_executor_end_infinite';
 SELECT 1 as executor_end_depth_test;
 WARNING:  pljs: executor_end_hook error: Error: cannot execute SQL without an outer snapshot or portal
-    at hook_executor_end_infinite (<function>:3:15)
+    at execute (native)
+    at hook_executor_end_infinite (<function>:3:8)
 
  executor_end_depth_test 
 -------------------------
@@ -467,7 +468,7 @@ $$ LANGUAGE pljs;
 SET pljs.planner_hook = 'hook_throws';
 SELECT 1 as planner_error_test;
 WARNING:  pljs: planner_hook error: Error: intentional hook error
-    at hook_throws (<function>:3:18)
+    at hook_throws (<function>:3:13)
 
  planner_error_test 
 --------------------
@@ -478,7 +479,7 @@ SET pljs.planner_hook = '';
 SET pljs.executor_run_hook = 'hook_throws';
 SELECT 1 as executor_run_error_test;
 WARNING:  pljs: executor_run_hook error: Error: intentional hook error
-    at hook_throws (<function>:3:18)
+    at hook_throws (<function>:3:13)
 
  executor_run_error_test 
 -------------------------
@@ -489,7 +490,7 @@ SET pljs.executor_run_hook = '';
 SET pljs.executor_end_hook = 'hook_throws';
 SELECT 1 as executor_end_error_test;
 WARNING:  pljs: executor_end_hook error: Error: intentional hook error
-    at hook_throws (<function>:3:18)
+    at hook_throws (<function>:3:13)
 
  executor_end_error_test 
 -------------------------
@@ -500,7 +501,7 @@ SET pljs.executor_end_hook = '';
 SET pljs.get_relation_info_hook = 'hook_throws';
 SELECT * FROM hooks_test LIMIT 1;
 WARNING:  pljs: get_relation_info_hook error: Error: intentional hook error
-    at hook_throws (<function>:3:18)
+    at hook_throws (<function>:3:13)
 
  id |   val    
 ----+----------
@@ -511,7 +512,7 @@ SET pljs.get_relation_info_hook = '';
 SET pljs.set_rel_pathlist_hook = 'hook_throws';
 SELECT * FROM hooks_test LIMIT 1;
 WARNING:  pljs: set_rel_pathlist_hook error: Error: intentional hook error
-    at hook_throws (<function>:3:18)
+    at hook_throws (<function>:3:13)
 
  id |   val    
 ----+----------
@@ -522,7 +523,7 @@ SET pljs.set_rel_pathlist_hook = '';
 SET pljs.create_upper_paths_hook = 'hook_throws';
 SELECT * FROM hooks_test LIMIT 1;
 WARNING:  pljs: create_upper_paths_hook error: Error: intentional hook error
-    at hook_throws (<function>:3:18)
+    at hook_throws (<function>:3:13)
 
  id |   val    
 ----+----------
@@ -533,31 +534,31 @@ SET pljs.create_upper_paths_hook = '';
 SET pljs.object_access_hook = 'hook_throws';
 CREATE TABLE hooks_err_test (id int);
 WARNING:  pljs: object_access_hook error: Error: intentional hook error
-    at hook_throws (<function>:3:18)
+    at hook_throws (<function>:3:13)
 
 LINE 1: CREATE TABLE hooks_err_test (id int);
                                         ^
 WARNING:  pljs: object_access_hook error: Error: intentional hook error
-    at hook_throws (<function>:3:18)
+    at hook_throws (<function>:3:13)
 
 WARNING:  pljs: object_access_hook error: Error: intentional hook error
-    at hook_throws (<function>:3:18)
+    at hook_throws (<function>:3:13)
 
 WARNING:  pljs: object_access_hook error: Error: intentional hook error
-    at hook_throws (<function>:3:18)
+    at hook_throws (<function>:3:13)
 
 WARNING:  pljs: object_access_hook error: Error: intentional hook error
-    at hook_throws (<function>:3:18)
+    at hook_throws (<function>:3:13)
 
 DROP TABLE hooks_err_test;
 WARNING:  pljs: object_access_hook error: Error: intentional hook error
-    at hook_throws (<function>:3:18)
+    at hook_throws (<function>:3:13)
 
 WARNING:  pljs: object_access_hook error: Error: intentional hook error
-    at hook_throws (<function>:3:18)
+    at hook_throws (<function>:3:13)
 
 WARNING:  pljs: object_access_hook error: Error: intentional hook error
-    at hook_throws (<function>:3:18)
+    at hook_throws (<function>:3:13)
 
 SET pljs.object_access_hook = '';
 -- Invalid function name triggers PG_CATCH in resolve
@@ -644,7 +645,7 @@ SET pljs.executor_start_hook = 'hook_throws';
 -- This should produce a WARNING but still execute successfully
 SELECT 1 as error_handling_test;
 WARNING:  pljs: executor_start_hook error: Error: intentional hook error
-    at hook_throws (<function>:3:18)
+    at hook_throws (<function>:3:13)
 
  error_handling_test 
 ---------------------

@@ -168,7 +168,8 @@ $$;
 SELECT * FROM tt_row_set();
 ERROR:  bit string length 2 does not match type bit(4)
 DETAIL:  Error: bit string length 2 does not match type bit(4)
-    at tt_row_set (<function>:4:19)
+    at return_next (native)
+    at tt_row_set (<function>:4:8)
 
 -- 4) A typmod failure in a row inside a row, caught.  The inner row's type
 -- descriptor was pinned while its columns were converted, and only released

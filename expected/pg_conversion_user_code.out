@@ -16,7 +16,7 @@ $$;
 SELECT * FROM cuc_record();
 ERROR:  record getter
 DETAIL:  Error: record getter
-    at get a (<function>:3:37)
+    at get a (<function>:3:32)
 
 CREATE FUNCTION cuc_int4() RETURNS int4 LANGUAGE pljs AS $$
   return { valueOf() { throw new Error('int4 valueOf'); } };
@@ -24,7 +24,7 @@ $$;
 SELECT cuc_int4();
 ERROR:  int4 valueOf
 DETAIL:  Error: int4 valueOf
-    at valueOf (<function>:3:39)
+    at valueOf (<function>:3:34)
 
 CREATE FUNCTION cuc_float8() RETURNS float8 LANGUAGE pljs AS $$
   return { valueOf() { throw new Error('float8 valueOf'); } };
@@ -32,7 +32,7 @@ $$;
 SELECT cuc_float8();
 ERROR:  float8 valueOf
 DETAIL:  Error: float8 valueOf
-    at valueOf (<function>:3:39)
+    at valueOf (<function>:3:34)
 
 CREATE FUNCTION cuc_numeric() RETURNS numeric LANGUAGE pljs AS $$
   return { valueOf() { throw new Error('numeric valueOf'); } };
@@ -40,7 +40,7 @@ $$;
 SELECT cuc_numeric();
 ERROR:  numeric valueOf
 DETAIL:  Error: numeric valueOf
-    at valueOf (<function>:3:39)
+    at valueOf (<function>:3:34)
 
 CREATE FUNCTION cuc_oid() RETURNS oid LANGUAGE pljs AS $$
   return { valueOf() { throw new Error('oid valueOf'); } };
@@ -48,7 +48,7 @@ $$;
 SELECT cuc_oid();
 ERROR:  oid valueOf
 DETAIL:  Error: oid valueOf
-    at valueOf (<function>:3:39)
+    at valueOf (<function>:3:34)
 
 CREATE FUNCTION cuc_text() RETURNS text LANGUAGE pljs AS $$
   return { toString() { throw new Error('text toString'); } };
@@ -56,7 +56,7 @@ $$;
 SELECT cuc_text();
 ERROR:  text toString
 DETAIL:  Error: text toString
-    at toString (<function>:3:40)
+    at toString (<function>:3:35)
 
 CREATE FUNCTION cuc_uuid() RETURNS uuid LANGUAGE pljs AS $$
   return { toString() { throw new Error('uuid toString'); } };
@@ -64,7 +64,7 @@ $$;
 SELECT cuc_uuid();
 ERROR:  uuid toString
 DETAIL:  Error: uuid toString
-    at toString (<function>:3:40)
+    at toString (<function>:3:35)
 
 CREATE FUNCTION cuc_uuid_is_null() RETURNS uuid LANGUAGE pljs AS $$
   return { get is_null() { throw new Error('is_null getter'); } };
@@ -72,7 +72,7 @@ $$;
 SELECT cuc_uuid_is_null();
 ERROR:  is_null getter
 DETAIL:  Error: is_null getter
-    at get is_null (<function>:3:43)
+    at get is_null (<function>:3:38)
 
 CREATE FUNCTION cuc_json() RETURNS json LANGUAGE pljs AS $$
   return { toJSON() { throw new Error('json toJSON'); } };
@@ -80,7 +80,7 @@ $$;
 SELECT cuc_json();
 ERROR:  json toJSON
 DETAIL:  Error: json toJSON
-    at toJSON (<function>:3:38)
+    at toJSON (<function>:3:33)
 
 CREATE FUNCTION cuc_jsonb() RETURNS jsonb LANGUAGE pljs AS $$
   return { get a() { throw new Error('jsonb getter'); } };
@@ -88,7 +88,7 @@ $$;
 SELECT cuc_jsonb();
 ERROR:  jsonb getter
 DETAIL:  Error: jsonb getter
-    at get a (<function>:3:37)
+    at get a (<function>:3:32)
 
 CREATE FUNCTION cuc_array_element() RETURNS int4[] LANGUAGE pljs AS $$
   const a = [1, 2];
@@ -98,7 +98,7 @@ $$;
 SELECT cuc_array_element();
 ERROR:  element getter
 DETAIL:  Error: element getter
-    at get (<function>:4:56)
+    at get (<function>:4:51)
 
 CREATE FUNCTION cuc_array_length() RETURNS int4[] LANGUAGE pljs AS $$
   return new Proxy([1, 2], {
@@ -113,7 +113,7 @@ $$;
 SELECT cuc_array_length();
 ERROR:  length getter
 DETAIL:  Error: length getter
-    at get (<function>:6:24)
+    at get (<function>:6:19)
 
 CREATE FUNCTION cuc_date() RETURNS timestamptz LANGUAGE pljs AS $$
   const d = new Date(1000);
@@ -123,7 +123,7 @@ $$;
 SELECT cuc_date();
 ERROR:  date valueOf
 DETAIL:  Error: date valueOf
-    at <anonymous> (<function>:4:38)
+    at <anonymous> (<function>:4:33)
     at [Symbol.toPrimitive] (native)
 
 -- A Date converts through its own Symbol.toPrimitive when it has one.  It
@@ -139,7 +139,7 @@ $$;
 SELECT cuc_date_to_primitive();
 ERROR:  date toPrimitive
 DETAIL:  Error: date toPrimitive
-    at value (<function>:5:35)
+    at value (<function>:5:30)
 
 -- A PostgreSQL error raised from a getter keeps its SQLSTATE.
 CREATE FUNCTION cuc_getter_sql_error(OUT a int4, OUT b int4) LANGUAGE pljs AS $$
@@ -148,7 +148,8 @@ $$;
 SELECT * FROM cuc_getter_sql_error();
 ERROR:  division by zero
 DETAIL:  Error: division by zero
-    at get a (<function>:3:41)
+    at execute (native)
+    at get a (<function>:3:34)
 
 \echo :LAST_ERROR_SQLSTATE
 22012

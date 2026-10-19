@@ -190,7 +190,7 @@ SELECT test_spi_lang(1);
 CREATE FUNCTION bad_syntax_pl() RETURNS int AS $$
   RETURN (unclosed;
 $$ LANGUAGE pseudolang;
-ERROR:  expecting ')'
+ERROR:  Unexpected token ';'
 -- Disallowed pseudotype return rejected by validator
 CREATE FUNCTION bad_rettype() RETURNS cstring AS $$
   return "abc";

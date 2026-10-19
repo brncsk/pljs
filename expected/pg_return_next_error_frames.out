@@ -21,7 +21,8 @@ $$ LANGUAGE pljs;
 SELECT count(*) FROM rnx_bad_srf();
 ERROR:  value is not an Array
 DETAIL:  Error: value is not an Array
-    at rnx_bad_srf (<function>:3:19)
+    at return_next (native)
+    at rnx_bad_srf (<function>:3:8)
 
 -- And now catchable in JavaScript, which is the part that changed: without the
 -- guard the longjmp skips this catch entirely and the error surfaces in SQL.

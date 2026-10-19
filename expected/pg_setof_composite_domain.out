@@ -64,7 +64,8 @@ $$;
 SELECT * FROM scd_next_missing();
 ERROR:  return_next: result column "b" has no matching property (object has: a; property names are case sensitive)
 DETAIL:  Error: return_next: result column "b" has no matching property (object has: a; property names are case sensitive)
-    at scd_next_missing (<function>:3:19)
+    at return_next (native)
+    at scd_next_missing (<function>:3:8)
 
 -- 3) A NOT NULL domain rejects a null row.
 CREATE DOMAIN scd_nn_pair AS scd_pair NOT NULL;
@@ -75,7 +76,8 @@ $$;
 SELECT * FROM scd_next_null();
 ERROR:  domain scd_nn_pair does not allow null values
 DETAIL:  Error: domain scd_nn_pair does not allow null values
-    at scd_next_null (<function>:4:19)
+    at return_next (native)
+    at scd_next_null (<function>:4:20)
 
 -- A null row the function returns, rather than passes to return_next(), is
 -- left out, as for any other composite set -- once the domain has allowed it.

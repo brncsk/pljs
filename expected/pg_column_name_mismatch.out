@@ -23,7 +23,8 @@ $$;
 SELECT * FROM cnm_missing();
 ERROR:  return_next: result column "b" has no matching property (object has: a; property names are case sensitive)
 DETAIL:  Error: return_next: result column "b" has no matching property (object has: a; property names are case sensitive)
-    at cnm_missing (<function>:3:19)
+    at return_next (native)
+    at cnm_missing (<function>:3:8)
 
 -- 2) the case-mismatch case, which is what this is really for.
 CREATE FUNCTION cnm_case() RETURNS TABLE(mixedcol int, b text) LANGUAGE pljs AS $$
@@ -32,7 +33,8 @@ $$;
 SELECT * FROM cnm_case();
 ERROR:  return_next: result column "mixedcol" has no matching property (object has: MixedCol, b; property names are case sensitive)
 DETAIL:  Error: return_next: result column "mixedcol" has no matching property (object has: MixedCol, b; property names are case sensitive)
-    at cnm_case (<function>:3:19)
+    at return_next (native)
+    at cnm_case (<function>:3:8)
 
 -- 3) an object with no properties at all.
 CREATE FUNCTION cnm_empty() RETURNS TABLE(a int, b text) LANGUAGE pljs AS $$
@@ -41,7 +43,8 @@ $$;
 SELECT * FROM cnm_empty();
 ERROR:  return_next: result column "a" has no matching property (object has: no properties; property names are case sensitive)
 DETAIL:  Error: return_next: result column "a" has no matching property (object has: no properties; property names are case sensitive)
-    at cnm_empty (<function>:3:19)
+    at return_next (native)
+    at cnm_empty (<function>:3:8)
 
 -- 4) the first missing column is the one reported, even when several are absent.
 CREATE FUNCTION cnm_several() RETURNS TABLE(alpha int, beta text, gamma int)
@@ -51,7 +54,8 @@ $$;
 SELECT * FROM cnm_several();
 ERROR:  return_next: result column "alpha" has no matching property (object has: beta; property names are case sensitive)
 DETAIL:  Error: return_next: result column "alpha" has no matching property (object has: beta; property names are case sensitive)
-    at cnm_several (<function>:3:19)
+    at return_next (native)
+    at cnm_several (<function>:3:8)
 
 -- 5) the error is catchable in JavaScript and carries the detail.
 DO $$
@@ -87,7 +91,8 @@ $$;
 SELECT * FROM cnm_many();
 ERROR:  return_next: result column "a" has no matching property (object has: prop0, prop1, prop2, prop3, prop4, prop5, prop6, prop7, prop8, prop9, ... (500 properties in total); property names are case sensitive)
 DETAIL:  Error: return_next: result column "a" has no matching property (object has: prop0, prop1, prop2, prop3, prop4, prop5, prop6, prop7, prop8, prop9, ... (500 properties in total); property names are case sensitive)
-    at cnm_many (<function>:5:19)
+    at return_next (native)
+    at cnm_many (<function>:5:20)
 
 DROP FUNCTION cnm_many();
 -- A row the function returns, rather than passes to return_next(), is checked
@@ -142,9 +147,9 @@ $$;
 SELECT * FROM cnm_proxy();
 ERROR:  trap
 DETAIL:  Error: trap
-    at ownKeys (<function>:3:66)
+    at ownKeys (<function>:3:61)
     at return_next (native)
-    at cnm_proxy (<function>:3:19)
+    at cnm_proxy (<function>:3:24)
 
 -- A key that is not valid text is listed as '?', not an encoding error.
 CREATE FUNCTION cnm_surrogate() RETURNS TABLE(a int, b text)
@@ -157,7 +162,8 @@ $$;
 SELECT * FROM cnm_surrogate();
 ERROR:  return_next: result column "b" has no matching property (object has: a, ?; property names are case sensitive)
 DETAIL:  Error: return_next: result column "b" has no matching property (object has: a, ?; property names are case sensitive)
-    at cnm_surrogate (<function>:6:19)
+    at return_next (native)
+    at cnm_surrogate (<function>:6:20)
 
 -- But not one every object inherits from Object.prototype: a row with no
 -- "toString" or "constructor" property was taken to have that column, and the
@@ -175,7 +181,8 @@ $$;
 SELECT * FROM cnm_builtin_next();
 ERROR:  return_next: result column "constructor" has no matching property (object has: a; property names are case sensitive)
 DETAIL:  Error: return_next: result column "constructor" has no matching property (object has: a; property names are case sensitive)
-    at cnm_builtin_next (<function>:3:19)
+    at return_next (native)
+    at cnm_builtin_next (<function>:3:8)
 
 CREATE FUNCTION cnm_builtin_own() RETURNS TABLE(a int, "toString" text)
 LANGUAGE pljs AS $$
@@ -234,7 +241,8 @@ $$;
 SELECT * FROM cnm_proxy_forwarding();
 ERROR:  return_next: result column "constructor" has no matching property (object has: a; property names are case sensitive)
 DETAIL:  Error: return_next: result column "constructor" has no matching property (object has: a; property names are case sensitive)
-    at cnm_proxy_forwarding (<function>:3:19)
+    at return_next (native)
+    at cnm_proxy_forwarding (<function>:3:24)
 
 -- A single-column set reads a Proxy row too, through its get trap, by the
 -- name the function gives its column.  The Proxy was converted as the
@@ -293,7 +301,8 @@ $$;
 SELECT * FROM cnm_method();
 ERROR:  return_next: the object's "name" is a function, which no result column takes
 DETAIL:  Error: return_next: the object's "name" is a function, which no result column takes
-    at cnm_method (<function>:8:19)
+    at return_next (native)
+    at cnm_method (<function>:8:24)
 
 CREATE FUNCTION cnm_arrow() RETURNS TABLE(id int, amount float8)
 LANGUAGE pljs AS $$

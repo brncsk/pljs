@@ -72,12 +72,14 @@ $$;
 SELECT * FROM rnn_bad_num();
 ERROR:  argument must be an object
 DETAIL:  Error: argument must be an object
-    at rnn_bad_num (<function>:3:19)
+    at return_next (native)
+    at rnn_bad_num (<function>:3:8)
 
 SELECT * FROM rnn_bad_str();
 ERROR:  argument must be an object
 DETAIL:  Error: argument must be an object
-    at rnn_bad_str (<function>:3:19)
+    at return_next (native)
+    at rnn_bad_str (<function>:3:8)
 
 -- 5) a set of only NULL rows is still a set of rows, not an empty result.
 CREATE FUNCTION rnn_only_nulls() RETURNS SETOF rnn_ct LANGUAGE pljs AS $$

@@ -47,8 +47,8 @@ CREATE FUNCTION si_late() RETURNS int AS $$
   import { add } from "si/math";
   return add(x, 1);
 $$ LANGUAGE pljs;
-ERROR:  expecting '('
-DETAIL:  SyntaxError: expecting '('
+ERROR:  Unexpected token '{'
+DETAIL:  SyntaxError: Unexpected token '{'
     at <function>:4:10
 
 -- ============================================================
@@ -136,8 +136,8 @@ CREATE FUNCTION si_strict() RETURNS int AS $$
   return undeclared_variable;
 $$ LANGUAGE pljs;
 SELECT si_strict();
-ERROR:  'undeclared_variable' is not defined
-DETAIL:  ReferenceError: 'undeclared_variable' is not defined
+ERROR:  undeclared_variable is not defined
+DETAIL:  ReferenceError: undeclared_variable is not defined
     at si_strict (<function>:4:25)
 
 -- ============================================================
@@ -172,8 +172,8 @@ CREATE FUNCTION si_bad_import() RETURNS int AS $$
   import { from "si/math";
   return 1;
 $$ LANGUAGE pljs;
-ERROR:  expecting '('
-DETAIL:  SyntaxError: expecting '('
+ERROR:  Unexpected token '{'
+DETAIL:  SyntaxError: Unexpected token '{'
     at <function>:3:10
 
 -- A name the module does not export.
@@ -233,7 +233,7 @@ $$ LANGUAGE pljs;
 SELECT si_line();
 ERROR:  on the fourth line
 DETAIL:  Error: on the fourth line
-    at si_line (<function>:5:18)
+    at si_line (<function>:5:13)
 
 CREATE FUNCTION si_line_plain() RETURNS int AS $$
 
@@ -242,7 +242,7 @@ $$ LANGUAGE pljs;
 SELECT si_line_plain();
 ERROR:  on the third line
 DETAIL:  Error: on the third line
-    at si_line_plain (<function>:4:18)
+    at si_line_plain (<function>:4:13)
 
 -- ============================================================
 -- A function that imports follows its modules when they change

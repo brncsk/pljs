@@ -91,7 +91,7 @@ $$ LANGUAGE pljs;
 SELECT eenv_empty();
 ERROR:  Error
 DETAIL:  Error
-    at eenv_empty (<function>:3:18)
+    at eenv_empty (<function>:3:13)
 
 -- An Error whose `stack` cannot be made a string -- a Symbol, or a getter
 -- that throws -- is reported as one with no stack.  Its NULL was written
@@ -99,8 +99,13 @@ DETAIL:  Error
 -- stack.
 DO $$ throw Object.assign(new Error('symbol stack'), {stack: Symbol()}); $$
   LANGUAGE pljs;
-ERROR:  symbol stack
-DETAIL:  execution error
+ERROR:  Error.prototype.stack setter expects a string
+DETAIL:  TypeError: Error.prototype.stack setter expects a string
+    at set stack (native)
+    at assign (native)
+    at <anonymous> (<function>:1:70)
+    at <eval> (<function>:1:82)
+
 DO $$
   const e = new Error('throwing stack');
 

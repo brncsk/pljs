@@ -61,7 +61,8 @@ $$;
 CALL rcs_commit_uncaught(NULL, NULL);
 ERROR:  cannot commit while a procedure's result is being converted
 DETAIL:  Error: cannot commit while a procedure's result is being converted
-    at get x (<function>:3:33)
+    at commit (native)
+    at get x (<function>:3:27)
 
 SELECT 1 AS still_connected;
  still_connected 

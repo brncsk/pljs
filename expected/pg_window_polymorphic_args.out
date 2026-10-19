@@ -117,7 +117,7 @@ SELECT wp_out_of_range(n) OVER () FROM wp;
 ERROR:  argument number out of range for get_func_arg_current
 DETAIL:  RangeError: argument number out of range for get_func_arg_current
     at get_func_arg_current (native)
-    at wp_out_of_range (<function>:4:39)
+    at wp_out_of_range (<function>:4:19)
 
 CREATE FUNCTION wp_negative(arg anyelement) RETURNS text AS $$
   var w = pljs.get_window_object();
@@ -127,7 +127,7 @@ SELECT wp_negative(n) OVER () FROM wp;
 ERROR:  argument number out of range for get_func_arg_current
 DETAIL:  RangeError: argument number out of range for get_func_arg_current
     at get_func_arg_current (native)
-    at wp_negative (<function>:4:39)
+    at wp_negative (<function>:4:19)
 
 -- ...and it is only an argument number if it is already one.  JS_ToInt32()
 -- returns the ECMAScript ToInt32 coercion, which turns a non-numeric value

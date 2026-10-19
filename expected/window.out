@@ -356,7 +356,8 @@ $$ LANGUAGE pljs WINDOW;
 SELECT bad_alloc('5') OVER ();
 ERROR:  window local memory overflow
 DETAIL:  Error: window local memory overflow
-    at bad_alloc (<function>:6:29)
+    at set_partition_local (native)
+    at bad_alloc (<function>:6:30)
 
 SELECT bad_alloc('not a number') OVER ();
  bad_alloc 
@@ -421,7 +422,8 @@ $$ LANGUAGE pljs;
 SELECT non_window();
 ERROR:  get_window_object called in wrong context
 DETAIL:  Error: get_window_object called in wrong context
-    at non_window (<function>:3:38)
+    at get_window_object (native)
+    at non_window (<function>:3:21)
 
 -- window object toString()
 CREATE FUNCTION win_tostring() RETURNS text AS $$

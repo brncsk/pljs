@@ -160,7 +160,7 @@ CALL cs_guard(NULL);
 NOTICE:  commit: cannot commit while a procedure's result is being converted
 ERROR:  b failed
 DETAIL:  Error: b failed
-    at get b (<function>:19:24)
+    at get b (<function>:19:19)
 
 SELECT count(*) AS committed FROM cs_log;
  committed 

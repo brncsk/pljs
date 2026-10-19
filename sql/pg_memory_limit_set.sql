@@ -12,11 +12,11 @@ CREATE EXTENSION IF NOT EXISTS pljs;
 -- below unambiguous.
 SET pljs.memory_limit = 300;
 
--- Catch the allocation error in JS so the (machine-dependent) OOM stack trace
--- does not leak into the portable expected output.
+-- QuickJS-ng raises "out of memory" as an InternalError, which JavaScript
+-- cannot catch, so the error reaches SQL.  The call that fails uses terse
+-- verbosity: the stack trace in DETAIL is not part of what this test checks.
 CREATE FUNCTION alloc_mb(mb int) RETURNS text LANGUAGE pljs AS $$
-  try { var a = new ArrayBuffer(mb * 1024 * 1024); return "ok:" + a.byteLength; }
-  catch (e) { return "oom:" + e.message; }
+  var a = new ArrayBuffer(mb * 1024 * 1024); return "ok:" + a.byteLength;
 $$;
 
 -- 200MB fits under the 300MB load-time cap.
@@ -25,7 +25,9 @@ SELECT alloc_mb(200) AS at_300_cap;
 -- Lowering the cap at runtime must now bite: 200MB no longer fits under 64MB.
 -- (Before the fix the runtime stayed at 300MB and this returned "ok".)
 SET pljs.memory_limit = 64;
+\set VERBOSITY terse
 SELECT alloc_mb(200) AS at_64_cap;
+\set VERBOSITY default
 
 -- Raising the cap at runtime lets the same allocation succeed again.
 SET pljs.memory_limit = 512;

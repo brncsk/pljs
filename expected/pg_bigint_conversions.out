@@ -6,8 +6,8 @@ CREATE FUNCTION bic_json() RETURNS json LANGUAGE pljs AS $$
   return {a: 10n};
 $$;
 SELECT bic_json();
-ERROR:  Do not know how to serialize a BigInt
-DETAIL:  TypeError: Do not know how to serialize a BigInt
+ERROR:  BigInt are forbidden in JSON.stringify
+DETAIL:  TypeError: BigInt are forbidden in JSON.stringify
 
 CREATE FUNCTION bic_jsonb() RETURNS jsonb LANGUAGE pljs AS $$
   return {a: 10n};

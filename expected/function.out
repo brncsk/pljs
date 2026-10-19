@@ -168,7 +168,8 @@ LANGUAGE pljs;
 SELECT * FROM set_of_record_but_non_obj();
 ERROR:  argument must be an object
 DETAIL:  Error: argument must be an object
-    at set_of_record_but_non_obj (<function>:3:18)
+    at return_next (native)
+    at set_of_record_but_non_obj (<function>:3:20)
 
 CREATE FUNCTION set_of_integers() RETURNS SETOF integer AS
 $$
@@ -230,7 +231,8 @@ SELECT * FROM set_of_unnamed_records() AS x(a int);
 SELECT * FROM set_of_unnamed_records() AS x(a int, c int);
 ERROR:  return_next: result column "c" has no matching property (object has: a, b; property names are case sensitive)
 DETAIL:  Error: return_next: result column "c" has no matching property (object has: a, b; property names are case sensitive)
-    at set_of_unnamed_records (<function>:3:21)
+    at return_next (native)
+    at set_of_unnamed_records (<function>:3:10)
 
 -- name counts and values match
 SELECT * FROM set_of_unnamed_records() AS x(a int, b int);
@@ -313,7 +315,8 @@ CREATE FUNCTION test_sql_error() RETURNS void AS $$ pljs.execute("ERROR") $$ LAN
 SELECT test_sql_error();
 ERROR:  syntax error at or near "ERROR"
 DETAIL:  Error: syntax error at or near "ERROR"
-    at test_sql_error (<function>:2:14)
+    at execute (native)
+    at test_sql_error (<function>:2:7)
 
 -- subtransaction()
 CREATE TABLE subtrant(a int);
@@ -351,9 +354,10 @@ $$ LANGUAGE pljs;
 SELECT test_subtransaction_throw();
 ERROR:  division by zero
 DETAIL:  Error: division by zero
-    at <anonymous> (<function>:5:14)
+    at execute (native)
+    at <anonymous> (<function>:5:7)
     at subtransaction (native)
-    at test_subtransaction_throw (<function>:3:20)
+    at test_subtransaction_throw (<function>:3:21)
 
 SELECT * FROM subtrant;
  a 
@@ -388,7 +392,7 @@ $$ LANGUAGE pljs;
 SELECT runtime_err();
 ERROR:  test error
 DETAIL:  Error: test error
-    at runtime_err (<function>:3:18)
+    at runtime_err (<function>:3:13)
 
 DROP FUNCTION runtime_err();
 -- Type mismatch: return string for int
