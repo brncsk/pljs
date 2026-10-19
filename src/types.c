@@ -34,7 +34,7 @@
 #include "utils/timestamp.h"
 #include "utils/typcache.h"
 
-#include "deps/quickjs/quickjs.h"
+#include "deps/quickjs-ng/quickjs.h"
 
 #include "pljs.h"
 
@@ -80,41 +80,65 @@ static JSAtom pljs_conversion_atoms[3] = {JS_ATOM_NULL, JS_ATOM_NULL,
 
 /* A Proxy's, for the same reason; see pljs_row_column(). */
 static JSClassID JS_CLASS_PROXY = 0;
-static JSClassID JS_CLASS_DATE = 10;
-static JSClassID JS_CLASS_ARRAY_BUFFER = 19;
-static JSClassID JS_CLASS_SHARED_ARRAY_BUFFER = 20;
-static JSClassID JS_CLASS_UINT8C_ARRAY = 21;
-static JSClassID JS_CLASS_INT8_ARRAY = 22;
-static JSClassID JS_CLASS_UINT8_ARRAY = 23;
-static JSClassID JS_CLASS_INT16_ARRAY = 24;
-static JSClassID JS_CLASS_UINT16_ARRAY = 25;
-static JSClassID JS_CLASS_INT32_ARRAY = 26;
-static JSClassID JS_CLASS_UINT32_ARRAY = 27;
+
+/*
+ * QuickJS-ng does not export its class enumeration, and its numbers are not
+ * those of QuickJS: it has classes of its own before ArrayBuffer.  Dates,
+ * ArrayBuffers and typed arrays are therefore told apart through its public
+ * functions (JS_IsDate(), JS_IsArrayBuffer(), JS_GetTypedArrayType()), not by
+ * class number.  The numbers above, up to JS_CLASS_BOOLEAN, are the same in
+ * both engines.
+ */
+
+// if given object is a typed array of one of these element types.
+inline static bool Is_TypedArray(JSValueConst obj, const int *types, int n) {
+  int type = JS_GetTypedArrayType(obj);
+
+  for (int i = 0; i < n; i++) {
+    if (type == types[i]) {
+      return true;
+    }
+  }
+
+  return false;
+}
 
 /**
- * Struct containing the type information for a catch-all*/
-// if given object is an array.
-/*
- * The brand checks below compare the object's class id.  They used
- * JS_GetOpaque(), which returns the class's payload rather than whether it
- * has one: a typed array's or ArrayBuffer's is a pointer, so that happened to
- * work, but a Date's is its time value, and the epoch's is all zero bits.  So
- * `new Date(0)` was not a Date -- a date or timestamp column parsed its
- * toString() instead, which fails outside UTC, and jsonb stored that string
- * rather than an ISO timestamp.
+ * @brief Whether a value is an array, as `Array.isArray()` says.
+ *
+ * QuickJS-ng's JS_IsArray() no longer looks through a Proxy, as QuickJS's
+ * did, so a Proxy of an array was converted as an object.  This follows the
+ * chain of targets to the end, as `Array.isArray()` does.
+ *
+ * @param ctx #JSContext - the context
+ * @param val #JSValueConst - the value
+ * @returns @c int 1 for an array, 0 otherwise, -1 with an exception pending
+ * for a revoked Proxy
  */
-inline static bool Is_ArrayType(JSValueConst obj, JSClassID class_id) {
-  return JS_GetClassID(obj) == class_id;
-}
+int pljs_is_array(JSContext *ctx, JSValueConst val) {
+  JSValue current = JS_DupValue(ctx, val);
 
-// if given object is array buffer.
-inline static bool Is_ArrayBuffer(JSValueConst obj) {
-  return JS_GetClassID(obj) == JS_CLASS_ARRAY_BUFFER;
-}
+  for (;;) {
+    if (JS_IsArray(current)) {
+      JS_FreeValue(ctx, current);
+      return 1;
+    }
 
-// if given object is shared array buffer.
-inline static bool Is_SharedArrayBuffer(JSValueConst obj) {
-  return JS_GetClassID(obj) == JS_CLASS_SHARED_ARRAY_BUFFER;
+    if (!JS_IsProxy(current)) {
+      JS_FreeValue(ctx, current);
+      return 0;
+    }
+
+    JSValue target = JS_GetProxyTarget(ctx, current);
+
+    JS_FreeValue(ctx, current);
+
+    if (JS_IsException(target)) {
+      return -1;
+    }
+
+    current = target;
+  }
 }
 
 // if this is an actual object of any sort.
@@ -123,9 +147,7 @@ inline static bool Is_Object(JSValueConst obj) {
 }
 
 // if given object is a date.
-inline static bool Is_Date(JSValueConst obj) {
-  return JS_GetClassID(obj) == JS_CLASS_DATE;
-}
+inline static bool Is_Date(JSValueConst obj) { return JS_IsDate(obj); }
 
 /*
  * Release a property-name enumeration obtained from JS_GetOwnPropertyNames().
@@ -345,7 +367,7 @@ static JSValue pljs_get_column(JSContext *ctx, JSValueConst obj,
  * @brief Whether a value is a plain JavaScript object -- `{...}` -- as opposed
  * to an Array, Date, ArrayBuffer, typed array or any other branded builtin.
  *
- * This is a real brand check (see the note on Is_Date() above): every builtin
+ * This is a real brand check (see the note on the class numbers above): every builtin
  * has its own class id, so only a bare object literal / `new Object` matches.
  * Callers use it to tell a `{column: value}` row object apart from a value that
  * legitimately *is* object-like (a Date for a timestamp, a typed array for a
@@ -3345,7 +3367,7 @@ static JSValue pljs_row_column(JSContext *ctx, JSValueConst row, JSAtom atom,
 
         if (JS_IsException(inherited)) {
           has = -1;
-        } else if (JS_SameValue(ctx, value, inherited)) {
+        } else if (JS_IsSameValue(ctx, value, inherited)) {
           has = JS_GetOwnProperty(ctx, NULL, holder, atom);
         } else {
           has = 1;
@@ -3449,7 +3471,7 @@ int pljs_converts_itself(JSContext *ctx, JSValueConst obj) {
       if (JS_IsException(inherited)) {
         ret = -1;
       } else {
-        ret = !JS_SameValue(ctx, method, inherited);
+        ret = !JS_IsSameValue(ctx, method, inherited);
       }
 
       JS_FreeValue(ctx, inherited);
@@ -4067,7 +4089,7 @@ static int64 pljs_bigint_to_int64_checked(JSContext *ctx, JSValueConst val,
   }
 
   back = JS_NewBigInt64(ctx, v);
-  same = JS_StrictEq(ctx, back, val);
+  same = JS_IsStrictEqual(ctx, back, val);
   JS_FreeValue(ctx, back);
 
   if (!same) {
@@ -4129,7 +4151,7 @@ static Datum pljs_jsvalue_to_datum_internal(pljs_type_io *io, int32 typmod,
    * A bare json/jsonb target still turns a JavaScript array into a JSON array,
    * which is what the original condition was for.
    */
-  if (JS_IsArray(ctx, val) && type.category == TYPCATEGORY_ARRAY) {
+  if (pljs_is_array(ctx, val) && type.category == TYPCATEGORY_ARRAY) {
     return pljs_jsvalue_to_array(&type, val, ctx, typmod);
   }
 
@@ -4149,7 +4171,7 @@ static Datum pljs_jsvalue_to_datum_internal(pljs_type_io *io, int32 typmod,
    * message. This makes the output direction agree, rather than producing
    * numbers that look like data.
    */
-  if (JS_IsArray(ctx, val) && type.typid != JSONOID && type.typid != JSONBOID) {
+  if (pljs_is_array(ctx, val) && type.typid != JSONOID && type.typid != JSONBOID) {
     ereport(ERROR,
             (errcode(ERRCODE_DATATYPE_MISMATCH),
              errmsg("cannot convert a JavaScript array to %s",
@@ -4159,7 +4181,7 @@ static Datum pljs_jsvalue_to_datum_internal(pljs_type_io *io, int32 typmod,
                        "json or jsonb.")));
   }
 
-  if (type.category == TYPCATEGORY_ARRAY && !JS_IsArray(ctx, val)) {
+  if (type.category == TYPCATEGORY_ARRAY && !pljs_is_array(ctx, val)) {
     elog(ERROR, "value is not an Array");
   }
 
@@ -4226,7 +4248,7 @@ static Datum pljs_jsvalue_to_datum_internal(pljs_type_io *io, int32 typmod,
       return pljs_string_to_datum_via_input(INT2OID, val, ctx);
     }
 
-    if (JS_IsBigInt(ctx, val)) {
+    if (JS_IsBigInt(val)) {
       v = pljs_bigint_to_int64_checked(ctx, val, INT2OID);
     } else {
       v = pljs_number_to_int_checked(ctx, val, (double)PG_INT16_MIN,
@@ -4248,7 +4270,7 @@ static Datum pljs_jsvalue_to_datum_internal(pljs_type_io *io, int32 typmod,
       return pljs_string_to_datum_via_input(INT4OID, val, ctx);
     }
 
-    if (JS_IsBigInt(ctx, val)) {
+    if (JS_IsBigInt(val)) {
       v = pljs_bigint_to_int64_checked(ctx, val, INT4OID);
     } else {
       v = pljs_number_to_int_checked(ctx, val, (double)PG_INT32_MIN,
@@ -4270,7 +4292,7 @@ static Datum pljs_jsvalue_to_datum_internal(pljs_type_io *io, int32 typmod,
       return pljs_string_to_datum_via_input(INT8OID, val, ctx);
     }
 
-    if (JS_IsBigInt(ctx, val)) {
+    if (JS_IsBigInt(val)) {
       v = pljs_bigint_to_int64_checked(ctx, val, INT8OID);
     } else {
       /*
@@ -4320,7 +4342,7 @@ static Datum pljs_jsvalue_to_datum_internal(pljs_type_io *io, int32 typmod,
      * so every value leaked both, and a string QuickJS had no memory for was
      * handed to numeric_in() as NULL.
      */
-    if (JS_IsString(val) || JS_IsBigInt(ctx, val)) {
+    if (JS_IsString(val) || JS_IsBigInt(val)) {
       return pljs_string_to_datum_via_input(NUMERICOID, val, ctx);
     }
 
@@ -4529,12 +4551,11 @@ static Datum pljs_jsvalue_to_datum_internal(pljs_type_io *io, int32 typmod,
     size_t psize;
     uint8_t *buffer;
 
-    if (Is_ArrayType(val, JS_CLASS_UINT8_ARRAY) ||
-        Is_ArrayType(val, JS_CLASS_INT8_ARRAY) ||
-        Is_ArrayType(val, JS_CLASS_UINT16_ARRAY) ||
-        Is_ArrayType(val, JS_CLASS_INT16_ARRAY) ||
-        Is_ArrayType(val, JS_CLASS_UINT32_ARRAY) ||
-        Is_ArrayType(val, JS_CLASS_INT32_ARRAY)) {
+    static const int byte_view_types[] = {
+        JS_TYPED_ARRAY_UINT8,  JS_TYPED_ARRAY_INT8,  JS_TYPED_ARRAY_UINT16,
+        JS_TYPED_ARRAY_INT16,  JS_TYPED_ARRAY_UINT32, JS_TYPED_ARRAY_INT32};
+
+    if (Is_TypedArray(val, byte_view_types, lengthof(byte_view_types))) {
       /*
        * The bytes the view covers, in the machine's byte order, as they were
        * copied element by element.  A bytea now reaches JavaScript as a
@@ -4562,7 +4583,7 @@ static Datum pljs_jsvalue_to_datum_internal(pljs_type_io *io, int32 typmod,
       memcpy(VARDATA(buffer), data + offset, length);
 
       return PointerGetDatum(buffer);
-    } else if (Is_ArrayBuffer(val)) {
+    } else if (JS_IsArrayBuffer(val)) {
       uint8_t *array_copy = JS_GetArrayBuffer(ctx, &psize, val);
 
       buffer = palloc(VARHDRSZ + psize);
@@ -4603,7 +4624,7 @@ static Datum pljs_jsvalue_to_datum_internal(pljs_type_io *io, int32 typmod,
   case DATEOID:
   case TIMESTAMPOID:
   case TIMESTAMPTZOID:
-    if (Is_Date(val)) {
+    if (JS_IsDate(val)) {
       double in;
 
       /* A Date's valueOf() can be replaced, and the replacement can throw. */
@@ -4633,7 +4654,7 @@ static Datum pljs_jsvalue_to_datum_internal(pljs_type_io *io, int32 typmod,
       return pljs_convert_epoch_to_timestamptz(in);
     } else {
       /*
-       * Not a Date object. Only Is_Date() was handled, so everything else --
+       * Not a Date object. Only JS_IsDate() was handled, so everything else --
        * including a perfectly valid ISO string like "2020-01-02 03:04:05" --
        * fell through and became SQL NULL, discarding a value the caller
        * plainly meant. Parse it with the target type's own input function, so
@@ -4960,16 +4981,40 @@ JSValue pljs_tuple_to_jsvalue(TupleDesc tupledesc, HeapTuple heap_tuple,
  * trigger's own tuple, returned as it is.
  *
  * The tuple lives only as long as the call.  When the call ends, a row that
- * the function kept (in a global, a cache, a closure: its reference count
- * is above the one this code holds) has its remaining columns converted, so
- * it reads the same afterwards; then the row forgets the tuple.
+ * the function kept (in a global, a cache, a closure: something other than
+ * this code holds a reference to it) has its remaining columns converted, so
+ * it reads the same afterwards; then the row forgets the tuple.  See
+ * pljs_lazy_row_release() for how the release finds out that the function
+ * kept the row.
  *
  * The accessors are shared: one getter and one setter per column number,
  * made once per context and kept in the context's opaque slot.
  */
 JSClassID pljs_row_class_id;
 
-static const JSClassDef pljs_row_class = {"PljsRow", .finalizer = NULL};
+/*
+ * The row object whose reference pljs_lazy_row_release() drops, and whether
+ * QuickJS finalized that object when it dropped it.  Only the finalizer below
+ * sets the flag.
+ */
+static void *pljs_row_releasing = NULL;
+static bool pljs_row_released = false;
+
+/*
+ * The finalizer of a lazy row.  It does not read the opaque #pljs_row: a row
+ * whose call failed before its release keeps a pointer to memory of that
+ * call, and QuickJS can finalize it at any later time.  It only compares the
+ * object with the row that pljs_lazy_row_release() drops.
+ */
+static void pljs_row_finalizer(JSRuntime *rt, JSValueConst val) {
+  if (pljs_row_releasing != NULL &&
+      JS_VALUE_GET_PTR(val) == pljs_row_releasing) {
+    pljs_row_released = true;
+  }
+}
+
+static const JSClassDef pljs_row_class = {"PljsRow",
+                                          .finalizer = pljs_row_finalizer};
 
 /* What a lazy row holds while its call runs. */
 typedef struct pljs_row {
@@ -4990,7 +5035,7 @@ typedef struct pljs_row_accessors {
  * @param rt #JSRuntime - the runtime
  */
 void pljs_row_register_class(JSRuntime *rt) {
-  JS_NewClassID(&pljs_row_class_id);
+  JS_NewClassID(rt, &pljs_row_class_id);
   JS_NewClass(rt, pljs_row_class_id, &pljs_row_class);
 }
 
@@ -5285,6 +5330,15 @@ HeapTuple pljs_lazy_row_to_tuple(JSValueConst obj, TupleDesc tupdesc,
  * while its tuple is still valid; then it forgets the tuple.  Any other
  * value is freed as it is.
  *
+ * QuickJS-ng has no public interface that reads a reference count.  The
+ * release thus drops its own reference first.  If that was the last
+ * reference, QuickJS frees the object at once and its finalizer sets
+ * #pljs_row_released.  If the finalizer did not run, something else holds
+ * the row: the function kept it.  The object is then still valid, and this
+ * code takes a new reference to it for the conversion.  No other code runs
+ * between the drop and the new reference, so nothing can free the object
+ * in between.
+ *
  * @param obj #JSValue - the argument
  * @param ctx #JSContext - Javascript context to execute in
  */
@@ -5293,36 +5347,45 @@ void pljs_lazy_row_release(JSValue obj, JSContext *ctx) {
                       ? JS_GetOpaque(obj, pljs_row_class_id)
                       : NULL;
 
-  if (row != NULL) {
-    JSRefCountHeader *header = (JSRefCountHeader *)JS_VALUE_GET_PTR(obj);
+  if (row == NULL) {
+    JS_FreeValue(ctx, obj);
+    return;
+  }
 
-    if (header->ref_count > 1) {
-      for (int c = 0; c < row->tupdesc->natts; c++) {
-        Form_pg_attribute att = TupleDescAttr(row->tupdesc, c);
+  pljs_row_releasing = JS_VALUE_GET_PTR(obj);
+  pljs_row_released = false;
+  JS_FreeValue(ctx, obj);
+  pljs_row_releasing = NULL;
 
-        if (att->attisdropped) {
-          continue;
-        }
+  if (pljs_row_released) {
+    return;
+  }
 
-        JSAtom atom = JS_NewAtom(ctx, NameStr(att->attname));
+  obj = JS_DupValue(ctx, obj);
 
-        if (pljs_row_untouched(ctx, obj, c, atom)) {
-          JSValue value = pljs_lazy_row_column(ctx, obj, row, c);
+  for (int c = 0; c < row->tupdesc->natts; c++) {
+    Form_pg_attribute att = TupleDescAttr(row->tupdesc, c);
 
-          if (JS_IsException(value)) {
-            JS_FreeValue(ctx, JS_GetException(ctx));
-          } else {
-            JS_FreeValue(ctx, value);
-          }
-        }
+    if (att->attisdropped) {
+      continue;
+    }
 
-        JS_FreeAtom(ctx, atom);
+    JSAtom atom = JS_NewAtom(ctx, NameStr(att->attname));
+
+    if (pljs_row_untouched(ctx, obj, c, atom)) {
+      JSValue value = pljs_lazy_row_column(ctx, obj, row, c);
+
+      if (JS_IsException(value)) {
+        JS_FreeValue(ctx, JS_GetException(ctx));
+      } else {
+        JS_FreeValue(ctx, value);
       }
     }
 
-    JS_SetOpaque(obj, NULL);
+    JS_FreeAtom(ctx, atom);
   }
 
+  JS_SetOpaque(obj, NULL);
   JS_FreeValue(ctx, obj);
 }
 
@@ -5773,7 +5836,7 @@ static JsonbValue *jsonb_from_value(JSValue value, JsonbBuildState *pstate,
     } else {
       val.type = jbvNull;
     }
-  } else if (JS_IsBigInt(ctx, value)) {
+  } else if (JS_IsBigInt(value)) {
     jsonb_bigint_error();
   } else {
     size_t len;
@@ -5887,7 +5950,7 @@ static JSValue jsonb_json_value(jsonb_build *build, JSValueConst value,
   JSValue to_json;
   JSValue json;
 
-  if (!JS_IsObject(value) && !JS_IsBigInt(ctx, value)) {
+  if (!JS_IsObject(value) && !JS_IsBigInt(value)) {
     return JS_DupValue(ctx, value);
   }
 
@@ -5941,7 +6004,7 @@ static bool jsonb_has_no_value(JSValueConst value, JSContext *ctx) {
  */
 static JsonbValue *jsonb_from_any(jsonb_build *build, JSValueConst value,
                                   JsonbIteratorToken type) {
-  if (JS_IsArray(build->ctx, value)) {
+  if (pljs_is_array(build->ctx, value)) {
     return jsonb_array_from_array(build, value);
   }
 
@@ -6157,7 +6220,7 @@ static Jsonb *convert_object(JSValue object, JSContext *ctx) {
     // Check the type and get its value.
     if (jsonb_has_no_value(json, ctx)) {
       build->result = NULL;
-    } else if (JS_IsArray(ctx, json)) {
+    } else if (pljs_is_array(ctx, json)) {
       build->result = jsonb_array_from_array(build, json);
     } else if (JS_IsObject(json)) {
       build->result = jsonb_object_from_object(build, json);

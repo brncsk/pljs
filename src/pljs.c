@@ -18,7 +18,7 @@
 #include "utils/rel.h"
 #include "utils/syscache.h"
 
-#include "deps/quickjs/quickjs.h"
+#include "deps/quickjs-ng/quickjs.h"
 #include "windowapi.h"
 
 #include "pljs.h"
@@ -48,7 +48,7 @@ static void call_anonymous_function(const char *, JSContext *);
 static Datum call_trigger(FunctionCallInfo fcinfo, pljs_context *context);
 static Datum dispatch_call(FunctionCallInfo fcinfo);
 static void run_inline(FunctionCallInfo fcinfo);
-static int interrupt_handler(JSRuntime *rt, void *opaque);
+static int interrupt_handler(JSContext *ctx, void *opaque);
 static void setup_storage(pljs_storage *storage, JSContext *ctx,
                           pljs_func *function, FunctionCallInfo fcinfo);
 static JSValue js_throw_uncatchable(ErrorData *edata, JSContext *ctx);
@@ -63,6 +63,30 @@ JSRuntime *rt = NULL;
 
 /** \brief PLJS Configuration */
 pljs_configuration configuration = {0};
+
+/** \brief JS stack budget of the runtime in bytes, set in pljs_runtime_init() */
+size_t pljs_js_stack_size = 0;
+
+/**
+ * @brief Throws a catchable InternalError; see the declaration in pljs.h.
+ *
+ * @param ctx #JSContext - the context to throw in
+ * @param fmt @c char * - printf format of the message
+ * @returns #JSValue JS_EXCEPTION
+ */
+JSValue pljs_throw_internal_error(JSContext *ctx, const char *fmt, ...) {
+  char message[1024];
+  va_list ap;
+
+  va_start(ap, fmt);
+  vsnprintf(message, sizeof(message), fmt, ap);
+  va_end(ap);
+
+  JS_ThrowInternalError(ctx, "%s", message);
+  JS_ResetUncatchableError(ctx);
+
+  return JS_EXCEPTION;
+}
 
 // class id for prepared statement handles.
 JSClassID js_prepared_statement_handle_id;
@@ -154,6 +178,7 @@ void pljs_runtime_init(void) {
       js_stack_size = 256 * 1024;
     }
     JS_SetMaxStackSize(rt, js_stack_size);
+    pljs_js_stack_size = js_stack_size;
   }
 
   /*
@@ -526,7 +551,7 @@ static char *dump_error(JSContext *ctx, char **message_out, char **detail_out,
     return oom;
   }
 
-  is_error = JS_IsError(ctx, exception_val);
+  is_error = JS_IsError(exception_val);
   str = JS_ToCStringLen(ctx, &s1, exception_val);
 
   if (!str) {
@@ -712,7 +737,7 @@ void pljs_ereport_js_exception(JSContext *ctx) {
                         "could not convert a JavaScript value");
 }
 
-static int interrupt_handler(JSRuntime *rt, void *opaque) {
+static int interrupt_handler(JSContext *ctx, void *opaque) {
   /*
    * Return non-zero to make QuickJS abort the running script.  We interrupt on
    * a pending query cancel (statement_timeout, pg_cancel_backend) or backend
@@ -3349,7 +3374,7 @@ static Datum call_srf_function(FunctionCallInfo fcinfo, pljs_context *context,
         MemoryContextSwitchTo(execution_context);
 
         // JS can return a single row or an array of rows.
-        if (JS_IsArray(context->ctx, ret)) {
+        if (pljs_is_array(context->ctx, ret)) {
           int32_t length = pljs_js_array_length(ret, context->ctx);
 
           if (length < 0) {
@@ -3437,7 +3462,7 @@ static JSValue js_throw_uncatchable(ErrorData *edata, JSContext *ctx) {
 
   JS_SetPropertyStr(ctx, error, "message",
                     js_error_string(ctx, edata->message));
-  JS_SetUncatchableError(ctx, error, true);
+  JS_SetUncatchableError(ctx, error);
 
   return JS_Throw(ctx, error);
 }

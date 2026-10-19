@@ -1228,8 +1228,8 @@ static void pljs_emit_log_hook(ErrorData *edata) {
  * Must be called once per runtime (from _PG_init or equivalent).
  */
 void pljs_hooks_init(JSRuntime *runtime) {
-  JS_NewClassID(&js_querydesc_id);
-  JS_NewClassID(&js_list_id);
+  JS_NewClassID(runtime, &js_querydesc_id);
+  JS_NewClassID(runtime, &js_list_id);
 
   /* QueryDesc class -- opaque pointer, no destructor (we don't own it). */
   JSClassDef querydesc_class = {

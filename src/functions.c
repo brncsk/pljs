@@ -1,5 +1,4 @@
-#include "deps/quickjs/list.h"
-#include "deps/quickjs/quickjs.h"
+#include "deps/quickjs-ng/quickjs.h"
 
 #include "postgres.h"
 
@@ -596,7 +595,7 @@ static JSValue pljs_execute(JSContext *ctx, JSValueConst this_val, int argc,
   }
 
   if (argc >= 2) {
-    if (JS_IsArray(ctx, argv[1])) {
+    if (pljs_is_array(ctx, argv[1])) {
       params = argv[1];
     } else {
       /* Consume trailing elements as an array. */
@@ -878,10 +877,35 @@ static const JSClassDef pljs_plan_handle_class = {
     .finalizer = pljs_plan_handle_finalizer,
 };
 
+/* The class of the global `pljs` object, which holds the #pljs_storage. */
+static const JSClassDef pljs_storage_class = {"PljsNamespace",
+                                              .finalizer = NULL};
+
+/* The class of the object that `pljs.get_window_object()` returns. */
+static const JSClassDef pljs_window_class = {"PljsWindow", .finalizer = NULL};
+
+/**
+ * @brief Registers the classes of pljs objects with the runtime.
+ *
+ * QuickJS-ng gives class ids per runtime, and `JS_SetOpaque()` refuses an
+ * object whose class is not registered.  Each class that pljs makes objects
+ * of must thus get its id and its definition here, before the first context
+ * is made.  An object of an unregistered class (id 0) cannot hold the
+ * #pljs_storage, and `pljs_storage_for_context()` then finds none.
+ *
+ * @param runtime #JSRuntime - the runtime
+ */
 void pljs_register_js_classes(JSRuntime *runtime) {
-  JS_NewClassID(&js_prepared_statement_handle_id);
+  JS_NewClassID(runtime, &js_prepared_statement_handle_id);
   JS_NewClass(runtime, js_prepared_statement_handle_id,
               &pljs_plan_handle_class);
+
+  JS_NewClassID(runtime, &js_pljs_storage_id);
+  JS_NewClass(runtime, js_pljs_storage_id, &pljs_storage_class);
+
+  JS_NewClassID(runtime, &js_window_id);
+  JS_NewClass(runtime, js_window_id, &pljs_window_class);
+
   pljs_row_register_class(runtime);
 }
 
@@ -971,7 +995,7 @@ static JSValue pljs_plan_execute(JSContext *ctx, JSValueConst this_val,
   JSValue ret = JS_UNDEFINED;
 
   if (argc) {
-    if (JS_IsArray(ctx, argv[0])) {
+    if (pljs_is_array(ctx, argv[0])) {
       params = argv[0];
     } else {
       /* Consume trailing elements as an array. */
@@ -1205,7 +1229,7 @@ static JSValue pljs_prepare(JSContext *ctx, JSValueConst this_val, int argc,
   }
 
   if (argc >= 2) {
-    if (JS_IsArray(ctx, argv[1])) {
+    if (pljs_is_array(ctx, argv[1])) {
       params = argv[1];
     } else {
       /* Consume trailing elements as an array. */
@@ -1474,7 +1498,7 @@ static JSValue pljs_plan_cursor(JSContext *ctx, JSValueConst this_val, int argc,
   }
 
   if (argc) {
-    if (JS_IsArray(ctx, argv[0])) {
+    if (pljs_is_array(ctx, argv[0])) {
       params = argv[0];
     } else {
       /* Consume trailing elements as an array. */
@@ -2203,13 +2227,13 @@ JSValue pljs_single_column_value(JSContext *ctx, JSValueConst row,
    * converted as the column's value itself, so the same Proxy row that a
    * two-column set read was "cannot convert NaN" in a single-column one.
    * Unless it is an array's, which is converted as the array, as it is for a
-   * function that returns one; JS_IsArray() sees through a Proxy, as
+   * function that returns one; pljs_is_array() sees through a Proxy, as
    * Array.isArray() does.
    */
   bool row_object = pljs_jsvalue_is_plain_object(row);
 
   if (pljs_jsvalue_is_proxy(row)) {
-    int is_array = JS_IsArray(ctx, row);
+    int is_array = pljs_is_array(ctx, row);
 
     /* A revoked Proxy. */
     if (is_array < 0) {
@@ -3734,114 +3758,20 @@ Datum pljs_version(PG_FUNCTION_ARGS) {
   PG_RETURN_TEXT_P(version);
 }
 
-struct JSString {
-  JSRefCountHeader header; /* must come first, 32-bit */
-  uint32_t len : 31;
-  uint8_t is_wide_char : 1; /* 0 = 8 bits, 1 = 16 bits characters */
-  /* for JS_ATOM_TYPE_SYMBOL: hash = weakref_count, atom_type = 3,
-     for JS_ATOM_TYPE_PRIVATE: hash = JS_ATOM_HASH_PRIVATE, atom_type = 3
-     XXX: could change encoding to have one more bit in hash */
-  uint32_t hash : 30;
-  uint8_t atom_type : 2; /* != 0 if atom, JS_ATOM_TYPE_x */
-  uint32_t hash_next;    /* atom_index for JS_ATOM_TYPE_SYMBOL */
-#ifdef DUMP_LEAKS
-  struct list_head link; /* string list */
-#endif
-  union {
-    uint8_t str8[0]; /* 8 bit strings will get an extra null terminator */
-    uint16_t str16[0];
-  } u;
-};
-
-typedef enum {
-  JS_GC_PHASE_NONE,
-  JS_GC_PHASE_DECREF,
-  JS_GC_PHASE_REMOVE_CYCLES,
-} JSGCPhaseEnum;
-
-typedef struct JSShapeProperty {
-  uint32_t hash_next : 26; /* 0 if last in list */
-  uint32_t flags : 6;      /* JS_PROP_XXX */
-  JSAtom atom;             /* JS_ATOM_NULL = free property entry */
-} JSShapeProperty;
-
-struct local_JSRuntime {
-  JSMallocFunctions mf;
-  JSMallocState malloc_state;
-  const char *rt_info;
-
-  int atom_hash_size; /* power of two */
-  int atom_count;
-  int atom_size;
-  int atom_count_resize; /* resize hash table at this count */
-  uint32_t *atom_hash;
-  struct JSString **atom_array;
-  int atom_free_index; /* 0 = none */
-
-  int class_count; /* size of class_array */
-  JSClass *class_array;
-
-  struct list_head context_list; /* list of JSContext.link */
-  /* list of JSGCObjectHeader.link. List of allocated GC objects (used
-     by the garbage collector) */
-  struct list_head gc_obj_list;
-  /* list of JSGCObjectHeader.link. Used during JS_FreeValueRT() */
-  struct list_head gc_zero_ref_count_list;
-  struct list_head tmp_obj_list; /* used during GC */
-  JSGCPhaseEnum gc_phase : 8;
-  size_t malloc_gc_threshold;
-  struct list_head weakref_list; /* list of JSWeakRefHeader.link */
-#ifdef DUMP_LEAKS
-  struct list_head string_list; /* list of JSString.link */
-#endif
-  /* stack limitation */
-  uintptr_t stack_size; /* in bytes, 0 if no limit */
-  uintptr_t stack_top;
-  uintptr_t stack_limit; /* lower stack limit */
-
-  JSValue current_exception;
-  /* true if inside an out of memory error, to avoid recursing */
-  int in_out_of_memory : 8;
-
-  struct JSStackFrame *current_stack_frame;
-
-  JSInterruptHandler *interrupt_handler;
-  void *interrupt_opaque;
-
-  JSHostPromiseRejectionTracker *host_promise_rejection_tracker;
-  void *host_promise_rejection_tracker_opaque;
-
-  struct list_head job_list; /* list of JSJobEntry.link */
-
-  JSModuleNormalizeFunc *module_normalize_func;
-  JSModuleLoaderFunc *module_loader_func;
-  void *module_loader_opaque;
-  /* timestamp for internal use in module evaluation */
-  int64_t module_async_evaluation_next_timestamp;
-
-  int can_block : 8; /* TRUE if Atomics.wait can block */
-  /* used to allocate, free and clone SharedArrayBuffers */
-  JSSharedArrayBufferFunctions sab_funcs;
-  /* see JS_SetStripInfo() */
-  uint8_t strip_flags;
-
-  /* Shape hash table */
-  int shape_hash_bits;
-  int shape_hash_size;
-  int shape_hash_count; /* number of hashed shapes */
-  void **shape_hash;
-  void *user_opaque;
-};
-
+/**
+ * @brief Returns the memory and stack figures of the QuickJS runtime.
+ *
+ * Callable function from Postgres `SELECT pljs_info();`.  The malloc figures
+ * come from `JS_ComputeMemoryUsage()`, the public QuickJS interface.  That
+ * function also walks every object of the runtime, so a call costs time in
+ * proportion to the size of the heap.  The stack size is the JS stack budget
+ * that `_PG_init()` gives the runtime.
+ */
 Datum pljs_info(PG_FUNCTION_ARGS) {
-  struct local_JSRuntime *local_rt = (struct local_JSRuntime *)rt;
-
-  size_t malloc_count = local_rt->malloc_state.malloc_count;
-  size_t malloc_size = local_rt->malloc_state.malloc_size;
-  size_t malloc_limit = local_rt->malloc_state.malloc_limit;
-  size_t stack_size = local_rt->stack_size;
-  size_t stack_limit = local_rt->stack_limit;
+  JSMemoryUsage usage;
   StringInfoData buf;
+
+  JS_ComputeMemoryUsage(rt, &usage);
 
   initStringInfo(&buf);
   appendStringInfo(
@@ -3849,13 +3779,14 @@ Datum pljs_info(PG_FUNCTION_ARGS) {
       "{\"version\":\"%s\",\"memory_limit_mb\":%zu,"
       "\"max_cached_contexts\":%d,\"cached_contexts\":%ld,"
       "\"hooks_enabled\":%s,\"hooks_max_depth\":%d,"
-      "\"malloc_count\":%zu,\"malloc_size\":%zu,\"malloc_limit\":%zu,"
-      "\"stack_size\":%zu,\"stack_limit\":%zu}",
+      "\"malloc_count\":%lld,\"malloc_size\":%lld,\"malloc_limit\":%lld,"
+      "\"stack_size\":%zu}",
       PLJS_VERSION, configuration.memory_limit,
       configuration.max_cached_contexts, pljs_cache_context_count(),
       configuration.hooks_enabled ? "true" : "false",
-      configuration.hooks_max_depth, malloc_count, malloc_size, malloc_limit,
-      stack_size, stack_limit);
+      configuration.hooks_max_depth, (long long)usage.malloc_count,
+      (long long)usage.malloc_size, (long long)usage.malloc_limit,
+      pljs_js_stack_size);
 
   return CStringGetTextDatum(buf.data);
 }

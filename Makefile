@@ -1,4 +1,4 @@
-.PHONY: lintcheck format cleansql docs clean test all
+.PHONY: lintcheck format cleansql cleanquickjs docs clean test all
 
 PLJS_VERSION = 1.1.0-dev
 
@@ -23,11 +23,25 @@ EXTENSION_SQL = pljs--$(PLJS_VERSION).sql $(UPGRADE_SQL) pljs--1.0.5.sql
 DATA = pljs.control $(EXTENSION_SQL)
 PG_CFLAGS += -fPIC -Wall -Wextra -Wno-unused-parameter -Wno-declaration-after-statement \
     -Wno-cast-function-type -std=c11 -DPLJS_VERSION=\"$(PLJS_VERSION)\" -DEXPOSE_GC
-SHLIB_LINK = -Ldeps/quickjs -lquickjs
+
+# QuickJS-ng is a git submodule. CMake builds it as the static library
+# libqjs.a in QJS_BUILD_DIR, outside the submodule, so that the submodule
+# stays clean. The library is position-independent because pljs.so links
+# it, and its symbols are hidden: the dynamic linker then cannot bind an
+# internal QuickJS function (for example `unicode_normalize`) to a function
+# of the same name that the `postgres` binary exports.
+QJS_DIR = deps/quickjs-ng
+QJS_BUILD_DIR = deps/build/quickjs-ng
+QJS_LIB = $(QJS_BUILD_DIR)/libqjs.a
+QJS_BUILD_TYPE = Release
+CMAKE ?= cmake
+
+SHLIB_LINK = -L$(QJS_BUILD_DIR) -lqjs -lm
 
 ifeq ($(DEBUG), 1)
 PG_CFLAGS += -g
 SHLIB_LINK += -g
+QJS_BUILD_TYPE = RelWithDebInfo
 endif
 
 ifeq ($(DEBUG_MEMORY), 1)
@@ -137,20 +151,27 @@ REGRESS = init-extension function json jsonb json_conv types bytea context \
 	pg_lazy_trigger_rows \
 	pg_subtransaction_aborts
 
-all: deps/quickjs/quickjs.h deps/quickjs/libquickjs.a $(EXTENSION_SQL)
+all: $(QJS_LIB) $(EXTENSION_SQL)
 
 include $(PGXS)
 
-src/pljs.o: deps/quickjs/libquickjs.a
+$(OBJS): $(QJS_LIB)
+$(OBJS:.o=.bc): $(QJS_DIR)/quickjs.h
 
-deps/quickjs/quickjs.h:
-	mkdir -p deps
-	git submodule update --init --recursive
-	patch -p1 <patches/01-shared-lib-build
-	patch -p1 <patches/02-unicode-conflict
+$(QJS_DIR)/quickjs.h:
+	git submodule update --init $(QJS_DIR)
 
-deps/quickjs/libquickjs.a: deps/quickjs/quickjs.h
-	cd deps/quickjs && make
+# The library also depends on the QuickJS-ng sources, so that a new
+# submodule commit causes a new build.  CMake then compiles only the changed
+# files.
+$(QJS_LIB): $(QJS_DIR)/quickjs.h $(wildcard $(QJS_DIR)/*.c $(QJS_DIR)/*.h)
+	$(CMAKE) -S $(QJS_DIR) -B $(QJS_BUILD_DIR) \
+		-DCMAKE_BUILD_TYPE=$(QJS_BUILD_TYPE) \
+		-DCMAKE_C_FLAGS="-fPIC -fvisibility=hidden" \
+		-DBUILD_SHARED_LIBS=OFF \
+		-DQJS_BUILD_LIBC=OFF \
+		-DQJS_ENABLE_INSTALL=OFF
+	$(CMAKE) --build $(QJS_BUILD_DIR) --target qjs
 
 format:
 	clang-format -i $(SRCS) src/pljs.h src/semver.h
@@ -167,12 +188,14 @@ pljs--1.0.5.sql: upgrade/pljs-1.0.5.sql
 lintcheck:
 	clang-tidy $(SRCS) -- $(LINTFLAGS) -I$(INCLUDEDIR) -I$(INCLUDEDIR_SERVER) -I$(PWD) --std=c11
 
-all: deps/quickjs/quickjs.h deps/quickjs/libquickjs.a $(EXTENSION_SQL)
-
 clean: cleansql
 
 cleansql:
 	$(RM) -f $(EXTENSION_SQL)
+
+# Removes the QuickJS-ng build. The next `make` builds it again.
+cleanquickjs:
+	$(RM) -r $(QJS_BUILD_DIR)
 
 docs:
 	doxygen src/Doxyfile

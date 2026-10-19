@@ -259,16 +259,28 @@ PLJS provides a small number of stored procedures.
 
 `SELECT pljs_info();`
 
-Returns a `JSON` object describing the PLJS build and current configuration:
+Returns a `JSON` object describing the PLJS build, the current configuration, and the memory and stack of the JavaScript runtime:
 
 ```json
 {
   "version": "1.1.0-dev",
   "memory_limit_mb": 512,
+  "max_cached_contexts": 64,
+  "cached_contexts": 1,
   "hooks_enabled": false,
-  "hooks_max_depth": 5
+  "hooks_max_depth": 5,
+  "malloc_count": 228,
+  "malloc_size": 14192,
+  "malloc_limit": 536870912,
+  "stack_size": 1048576
 }
 ```
+
+- `malloc_count` and `malloc_size` are the number and total size of the allocations that the runtime holds.
+- `malloc_limit` is the memory limit of the runtime (`pljs.memory_limit`).
+- `stack_size` is the JS stack budget in bytes: half of `max_stack_depth`, and at least 256 kB.
+
+The function walks every object of the runtime to count the memory, so it takes more time when the heap is large.
 
 Only superusers can call it, unless it has been granted to a role: `GRANT EXECUTE ON FUNCTION pljs_info() TO monitoring;`.
 

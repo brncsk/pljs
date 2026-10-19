@@ -16,3 +16,4 @@ docs/xml
 pljs--*.sql
 compile_commands.json
 */node_modules
+deps/build

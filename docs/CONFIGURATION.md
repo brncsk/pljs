@@ -11,6 +11,12 @@ PLJS provides configuration options that are available either with the `SET` com
 | `pljs.start_proc`        | A function name to be called when the JavaScript engine is first initialized  |                                |
 | `pljs.max_module_depth`  | Maximum recursion depth for nested `pljs.import()` / `pljs.require()` calls   | `512` (Range of `1`-`65536`)   |
 
+## Limits that stop a function
+
+When a function goes above `pljs.memory_limit`, QuickJS-ng raises an `InternalError` with the message `out of memory`. A function cannot catch an `InternalError` with `try`/`catch`: the error always stops the function and goes to Postgres. This is also true for the `InternalError` with the message `interrupted`, which stops a function when Postgres cancels the query (for example at `statement_timeout`).
+
+When JavaScript recursion goes above the stack budget, QuickJS-ng raises a `RangeError` with the message `Maximum call stack size exceeded`. A function can catch this error. The stack budget is half of `max_stack_depth`, and at least 256 kB. `pljs_info()` shows it as `stack_size`.
+
 ## Hook Options
 
 Hooks require superuser privileges to enable or configure. See [HOOKS.md](HOOKS.md) for details.

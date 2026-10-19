@@ -21,6 +21,7 @@ Some specific packages and software need to be installed depending on the operat
 ### MacOS
 
 - XCode (provides `clang`, `make`, and `git`)
+- CMake (such as with `brew`)
 - Postgres (such as with `brew`)
 
 ### Linux
@@ -29,6 +30,20 @@ Some specific packages and software need to be installed depending on the operat
 - `git`
 - `gcc` (typically with `build-essential` or `development tools` depending on operating system)
 - `make` (generally installed with the above packages)
+- `cmake`
+
+### QuickJS-ng
+
+PLJS links the JavaScript engine, [QuickJS-ng](https://github.com/quickjs-ng/quickjs), statically into `pljs.so`. The engine source is the git submodule `deps/quickjs-ng`, pinned to one commit. `make` does these steps before it compiles PLJS:
+
+1. If `deps/quickjs-ng` is empty, it runs `git submodule update --init deps/quickjs-ng`.
+2. It configures QuickJS-ng with CMake in `deps/build/quickjs-ng`, outside the submodule, and builds the static library `libqjs.a` there.
+
+The library is built with `-fPIC`, because `pljs.so` is a shared object, and with `-fvisibility=hidden`. The hidden visibility is necessary: the `postgres` binary exports functions that have the same names as internal QuickJS-ng functions (for example `unicode_normalize`). If `pljs.so` exported the QuickJS-ng symbols, the dynamic linker could bind a QuickJS-ng call to the Postgres function, and the backend would crash.
+
+`make DEBUG=1` builds QuickJS-ng with debug information (`RelWithDebInfo`). `make` builds the library again only when a QuickJS-ng source file changes. Thus after a change of build options, run `make cleanquickjs` to remove the QuickJS-ng build, so that the next `make` builds it again.
+
+To move to a newer QuickJS-ng, check out the new commit in `deps/quickjs-ng`, commit the submodule change, and run the tests. Some expected test output contains QuickJS-ng error messages and stack traces, so a new version can change it.
 
 ## Testing
 
@@ -52,6 +67,8 @@ All source for the PLJS extension can be found in the `src` directory:
 - `functions.c` - Functions available from PLV8
 - `types.c` - Type conversion to/from Postgres/JavaScript
 - `params.c` - Parameter management for Postgres
+
+The JavaScript engine is in `deps/quickjs-ng` (see [QuickJS-ng](#quickjs-ng)).
 
 ### Tests
 

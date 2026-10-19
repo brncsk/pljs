@@ -17,8 +17,7 @@
 #include "utils/tuplestore.h"
 #include "windowapi.h"
 
-#include "deps/quickjs/quickjs-libc.h"
-#include "deps/quickjs/quickjs.h"
+#include "deps/quickjs-ng/quickjs.h"
 
 /*
  * PostgreSQL 18 provides pg_noreturn (C11 _Noreturn); earlier versions provide
@@ -117,6 +116,22 @@ extern pljs_configuration configuration;
 
 // quickjs runtime.
 extern JSRuntime *rt;
+
+// JS stack budget of the runtime in bytes, for pljs_info().
+extern size_t pljs_js_stack_size;
+
+/*
+ * Throws an InternalError that JavaScript can catch.  QuickJS-ng makes every
+ * InternalError uncatchable (JS_ThrowInternalError() and `new InternalError()`
+ * alike), so that its out of memory and interrupt errors always stop a
+ * function; pljs's own InternalErrors (a circular module dependency, an import
+ * too deep) stay catchable, as they were under QuickJS.
+ */
+JSValue pljs_throw_internal_error(JSContext *ctx, const char *fmt, ...)
+    pg_attribute_printf(2, 3);
+
+// Whether a value is an array, looking through a Proxy; see types.c.
+int pljs_is_array(JSContext *ctx, JSValueConst val);
 
 // Composite key for JSContext cache: effective executing user + function owner.
 typedef struct pljs_context_key {

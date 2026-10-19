@@ -1,6 +1,6 @@
 # Benchmarking PLJS vs PLV8
 
-PLV8 uses Google's V8 JavaScript engine, whereas PLJS uses the QuickJS engine. QuickJS's performance relative to V8 is well-documented [here](https://bellard.org/quickjs/bench.html).
+PLV8 uses Google's V8 JavaScript engine, whereas PLJS uses the QuickJS-ng engine, a fork of QuickJS. QuickJS's performance relative to V8 is well-documented [here](https://bellard.org/quickjs/bench.html).
 
 Since Postgres stored procedures are typically short-lived, which primarily serve data transformations, we focus instead on specific metrics such as type conversions between PostgreSQL and JavaScript, and startup times.
 

@@ -1391,7 +1391,7 @@ static JSValue pljs_throw_coded_module_error(JSContext *ctx, int sqlerrcode,
   if (is_ref_error) {
     JS_ThrowReferenceError(ctx, "%s", msg ? msg : "error");
   } else {
-    JS_ThrowInternalError(ctx, "%s", msg ? msg : "error");
+    pljs_throw_internal_error(ctx, "%s", msg ? msg : "error");
   }
   if (sqlerrcode != 0) {
     JSValue ex = JS_GetException(ctx);
@@ -1586,7 +1586,7 @@ char *pljs_module_normalize(JSContext *ctx, const char *base_name,
 
   if (!pljs_module_relids()) {
     module_load_failed = true;
-    JS_ThrowInternalError(ctx, "the pljs module tables are not installed");
+    pljs_throw_internal_error(ctx, "the pljs module tables are not installed");
     return NULL;
   }
 
@@ -1704,10 +1704,13 @@ static JSValue pljs_module_state(JSContext *ctx) {
  */
 static bool pljs_source_is_commonjs(JSContext *ctx, const char *source,
                                     size_t len) {
-  if (JS_DetectModule(source, len)) {
-    return false;
-  }
-
+  /*
+   * No JS_DetectModule() shortcut: QuickJS-ng's version says whether the
+   * source compiles as a module, which every script without an import or an
+   * export statement does, so CommonJS was taken for an ES module and ran
+   * without `module` and `exports`.  The function wrapper below tells the two
+   * apart by itself.
+   */
   StringInfoData wrapped;
 
   initStringInfo(&wrapped);
@@ -1834,7 +1837,7 @@ JSModuleDef *pljs_module_loader(JSContext *ctx, const char *name,
 
   if (!pljs_module_relids()) {
     module_load_failed = true;
-    JS_ThrowInternalError(ctx, "the pljs module tables are not installed");
+    pljs_throw_internal_error(ctx, "the pljs module tables are not installed");
     return NULL;
   }
 
@@ -2012,7 +2015,7 @@ static JSValue pljs_await(JSContext *ctx, JSValue obj) {
         JS_FreeValue(job_ctx, JS_GetException(job_ctx));
       } else if (ran == 0) {
         JS_FreeValue(ctx, obj);
-        return JS_ThrowInternalError(
+        return pljs_throw_internal_error(
             ctx, "module did not finish loading: it is waiting on itself, or "
                  "on an await that never completes");
       }
@@ -2128,7 +2131,7 @@ static JSValue pljs_module_load_once(JSContext *ctx, const char *spec,
   JSValue being = JS_GetPropertyStr(ctx, loading, canonical);
 
   if (JS_ToBool(ctx, being)) {
-    JS_ThrowInternalError(ctx, "circular module dependency: '%s' is loading",
+    pljs_throw_internal_error(ctx, "circular module dependency: '%s' is loading",
                           spec);
   } else {
     JS_SetPropertyStr(ctx, loading, canonical, JS_TRUE);
@@ -2257,7 +2260,7 @@ static JSValue pljs_module_load(JSContext *ctx, const char *spec,
   const char *what = as_require ? "require" : "import";
 
   if (module_depth >= configuration.max_module_depth) {
-    return JS_ThrowInternalError(
+    return pljs_throw_internal_error(
         ctx, "module %s depth exceeded (%d): possible circular dependency",
         what, configuration.max_module_depth);
   }
@@ -2266,7 +2269,7 @@ static JSValue pljs_module_load(JSContext *ctx, const char *spec,
   AcceptInvalidationMessages();
 
   if (!pljs_module_relids()) {
-    return JS_ThrowInternalError(ctx,
+    return pljs_throw_internal_error(ctx,
                                  "the pljs module tables are not installed");
   }
 
@@ -2318,7 +2321,7 @@ static JSValue pljs_module_load(JSContext *ctx, const char *spec,
     return result;
   }
 
-  return JS_ThrowInternalError(ctx, "module '%s' kept changing while it loaded",
+  return pljs_throw_internal_error(ctx, "module '%s' kept changing while it loaded",
                                spec);
 }
 
@@ -2411,7 +2414,7 @@ JSValue pljs_compile_bytecode_js(JSContext *ctx, JSValueConst this_val,
       JS_FreeCString(ctx, raw_mod_name);
     }
     JS_FreeCString(ctx, src);
-    return JS_ThrowInternalError(ctx, "could not create a JavaScript context");
+    return pljs_throw_internal_error(ctx, "could not create a JavaScript context");
   }
 
   size_t src_len = strlen(src);
@@ -2471,7 +2474,7 @@ JSValue pljs_compile_bytecode_js(JSContext *ctx, JSValueConst this_val,
     JSValue exc = JS_GetException(comp_ctx);
     JS_FreeValue(comp_ctx, exc);
     JS_FreeContext(comp_ctx);
-    return JS_ThrowInternalError(ctx, "failed to serialize module bytecode");
+    return pljs_throw_internal_error(ctx, "failed to serialize module bytecode");
   }
 
   JSValue ab = JS_NewArrayBufferCopy(ctx, out_buf, out_len);
@@ -2537,7 +2540,7 @@ JSValue pljs_module_eval_source(JSContext *ctx, const char *source, size_t len,
   AcceptInvalidationMessages();
 
   if (!pljs_module_relids()) {
-    return JS_ThrowInternalError(ctx,
+    return pljs_throw_internal_error(ctx,
                                  "the pljs module tables are not installed");
   }
 

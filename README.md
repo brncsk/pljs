@@ -8,7 +8,7 @@ A [Discord](https://discord.gg/XYGSCfVNBC) is available for general questions, d
 
 ## Technology
 
-JavaScript: [QuickJS](https://bellard.org/quickjs/quickjs.html)
+JavaScript: [QuickJS-ng](https://quickjs-ng.github.io/quickjs/), a fork of [QuickJS](https://bellard.org/quickjs/quickjs.html)
 
 PostgreSQL: 14+
 
