@@ -1601,6 +1601,30 @@ static bool pljs_is_ascii(const char *str, size_t len) {
 }
 
 /**
+ * @brief Whether text is all ASCII without a NUL, which every server encoding
+ * holds as it is and accepts.
+ *
+ * Text from QuickJS is mostly of this kind: names, keys and identifiers. It
+ * needs no conversion and no validation, so pljs_utf8_to_server() returns it
+ * at once, before it asks for the database's encoding or validates it.
+ *
+ * @param str @c char* - the text
+ * @param len @c size_t - its length
+ * @returns @c bool - true when every byte is between 0x01 and 0x7F
+ */
+static bool pljs_is_plain_ascii(const char *str, size_t len) {
+  for (size_t i = 0; i < len; i++) {
+    unsigned char c = (unsigned char)str[i];
+
+    if (c == 0 || c >= 0x80) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+/**
  * @brief Converts text with a function pljs_encoding_init() looked up,
  * raising for any character it cannot convert.
  *
@@ -1736,7 +1760,18 @@ JSValue pljs_new_server_string(JSContext *ctx, const char *str, size_t len) {
  * @returns @c char* - @p str, or a palloc'd conversion of it
  */
 char *pljs_utf8_to_server(const char *str, size_t len) {
-  int encoding = GetDatabaseEncoding();
+  int encoding;
+
+  /*
+   * Plain ASCII is valid in every server encoding, as it is. A UTF8 database
+   * validated it in pg_any_to_server() all the same, for every string of
+   * every jsonb value.
+   */
+  if (pljs_is_plain_ascii(str, len)) {
+    return (char *)str;
+  }
+
+  encoding = GetDatabaseEncoding();
 
   if (encoding == PG_UTF8 || encoding == PG_SQL_ASCII || !pljs_encoding_ready ||
       !pljs_have_to_server) {
@@ -1978,6 +2013,11 @@ JSValue pljs_new_message_string(JSContext *ctx, const char *str, size_t len) {
 static char *pljs_js_string_to_server(JSContext *ctx, const char *str,
                                       size_t len) {
   char *server;
+
+  /* Plain ASCII cannot fail: no PG_TRY, which saves the signal mask. */
+  if (pljs_is_plain_ascii(str, len)) {
+    return (char *)str;
+  }
 
   PG_TRY();
   {
