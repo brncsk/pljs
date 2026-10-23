@@ -116,7 +116,21 @@ inline static bool Is_TypedArray(JSValueConst obj, const int *types, int n) {
  * for a revoked Proxy
  */
 int pljs_is_array(JSContext *ctx, JSValueConst val) {
-  JSValue current = JS_DupValue(ctx, val);
+  JSValue current;
+
+  /*
+   * Most values are not a Proxy: answer for them without a reference, which
+   * every conversion of a jsonb value took and released for each member.
+   */
+  if (JS_IsArray(val)) {
+    return 1;
+  }
+
+  if (!JS_IsProxy(val)) {
+    return 0;
+  }
+
+  current = JS_DupValue(ctx, val);
 
   for (;;) {
     if (JS_IsArray(current)) {
