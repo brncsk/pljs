@@ -2777,6 +2777,18 @@ static Datum call_trigger(FunctionCallInfo fcinfo, pljs_context *context) {
   }
 
   /*
+   * Make the trigger's transition tables (REFERENCING NEW TABLE AS ... / OLD
+   * TABLE AS ...) visible to the queries of this call, under the names the
+   * trigger gives them, as PL/pgSQL does.  Without it a statement-level trigger
+   * that declares them cannot read them: every query that names one fails with
+   * "relation does not exist".  A trigger without transition tables registers
+   * nothing.
+   */
+  if (SPI_register_trigger_data(trig) != SPI_OK_TD_REGISTER) {
+    elog(ERROR, "could not register the transition tables of the trigger");
+  }
+
+  /*
    * Re-anchor QuickJS's stack measurement here, at the C-stack depth this call
    * actually starts from.  JS_NewRuntime() records the stack top once, inside
    * _PG_init, at whatever depth the first pljs call happened to be -- but JS
